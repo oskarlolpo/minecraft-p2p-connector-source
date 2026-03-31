@@ -47,10 +47,11 @@ async fn connect_to_peer(
     state: State<'_, AppState>,
     peer_addr: String,
     peer_id: Option<String>,
+    relay_session_id: Option<String>,
 ) -> Result<(), String> {
     state
         .manager
-        .connect_to_peer(app, peer_addr, peer_id)
+        .connect_to_peer(app, peer_addr, peer_id, relay_session_id)
         .await
         .map_err(|error| format!("{error:#}"))
 }

@@ -19,7 +19,10 @@ use crate::{
     signaling::{discover_public_addr, punch_remote, SignalingConfig},
 };
 
-use super::{minecraft, proxy};
+use super::{
+    minecraft, proxy,
+    relay::{self, RelayConfig},
+};
 
 const ABLY_SIGNAL_LABEL: &str = "Ably Presence + Channels";
 const CLIENT_CONNECT_RETRY_ATTEMPTS: usize = 10;
@@ -37,6 +40,7 @@ struct Inner {
     session: Mutex<Option<SessionRuntime>>,
     status: RwLock<NetworkStatus>,
     stun: SignalingConfig,
+    relay: RelayConfig,
 }
 
 struct SessionRuntime {
@@ -57,10 +61,17 @@ struct HostControl {
     local_game_port: u16,
     expected_peers: Arc<RwLock<HashMap<SocketAddr, String>>>,
     live_connections: Arc<Mutex<HashMap<String, Connection>>>,
+    relay_sessions: Arc<Mutex<HashMap<String, HostRelayRuntime>>>,
 }
 
 struct ClientControl {
     peer_addr: SocketAddr,
+}
+
+struct HostRelayRuntime {
+    session_id: String,
+    cancel: CancellationToken,
+    task: JoinHandle<()>,
 }
 
 #[derive(Clone, Serialize)]
@@ -68,6 +79,7 @@ struct ClientControl {
 struct TunnelEstablishedEvent {
     peer_addr: String,
     minecraft_addr: String,
+    transport: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -80,6 +92,7 @@ struct TunnelFailedEvent {
 impl NetworkManager {
     pub fn new() -> Self {
         let stun = SignalingConfig::from_env();
+        let relay = RelayConfig::from_env().expect("relay config must be valid");
         let mut status = NetworkStatus {
             signaling_server: ABLY_SIGNAL_LABEL.into(),
             ..Default::default()
@@ -92,6 +105,7 @@ impl NetworkManager {
                 session: Mutex::new(None),
                 status: RwLock::new(status),
                 stun,
+                relay,
             }),
         }
     }
@@ -142,6 +156,7 @@ impl NetworkManager {
         app: AppHandle,
         peer_addr: String,
         peer_id: Option<String>,
+        relay_session_id: Option<String>,
     ) -> Result<()> {
         let peer_addr = peer_addr.trim().to_string();
         if peer_addr.is_empty() {
@@ -154,12 +169,21 @@ impl NetworkManager {
 
         let _guard = self.inner.control.lock().await;
 
-        if self.punch_from_host(peer_addr, peer_id.clone()).await? {
+        if self
+            .punch_from_host(peer_addr, peer_id.clone(), relay_session_id.clone())
+            .await?
+        {
             return Ok(());
         }
 
         self.reset_session().await;
-        self.start_client_connect(app, peer_addr).await
+        self.start_client_connect(
+            app,
+            peer_addr,
+            peer_id.unwrap_or_else(|| peer_addr.to_string()),
+            relay_session_id,
+        )
+        .await
     }
 
     pub async fn kick_peer(&self, peer_id: String) -> Result<()> {
@@ -199,6 +223,7 @@ impl NetworkManager {
         let peer_id = Uuid::new_v4().to_string();
         let expected_peers = Arc::new(RwLock::new(HashMap::<SocketAddr, String>::new()));
         let live_connections = Arc::new(Mutex::new(HashMap::<String, Connection>::new()));
+        let relay_sessions = Arc::new(Mutex::new(HashMap::<String, HostRelayRuntime>::new()));
         let has_password = password.is_some();
 
         self.overwrite_status(NetworkStatus {
@@ -266,6 +291,7 @@ impl NetworkManager {
             endpoint,
             expected_peers.clone(),
             live_connections.clone(),
+            relay_sessions.clone(),
             local_port,
             cancel.clone(),
         );
@@ -280,6 +306,7 @@ impl NetworkManager {
                 local_game_port: local_port,
                 expected_peers,
                 live_connections,
+                relay_sessions,
             }),
         });
 
@@ -290,6 +317,7 @@ impl NetworkManager {
         &self,
         peer_addr: SocketAddr,
         announced_peer_id: Option<String>,
+        relay_session_id: Option<String>,
     ) -> Result<bool> {
         let session = self.inner.session.lock().await;
         let Some(runtime) = session.as_ref() else {
@@ -306,6 +334,7 @@ impl NetworkManager {
         let peer_id = host.peer_id.clone();
         let local_game_port = host.local_game_port;
         let expected_peers = host.expected_peers.clone();
+        let relay_sessions = host.relay_sessions.clone();
         drop(session);
 
         let display_peer = announced_peer_id
@@ -327,6 +356,16 @@ impl NetworkManager {
         self.push_log(format!("Host punch -> {display_peer} ({peer_addr})"))
             .await;
 
+        if let Some(session_id) = relay_session_id {
+            self.start_or_replace_host_relay(
+                relay_sessions,
+                display_peer.clone(),
+                session_id,
+                local_game_port,
+            )
+            .await;
+        }
+
         tokio::spawn(async move {
             let _ = punch_remote(socket, peer_addr, &room_name, &peer_id, cancel).await;
         });
@@ -334,9 +373,21 @@ impl NetworkManager {
         Ok(true)
     }
 
-    async fn start_client_connect(&self, app: AppHandle, peer_addr: SocketAddr) -> Result<()> {
+    async fn start_client_connect(
+        &self,
+        app: AppHandle,
+        peer_addr: SocketAddr,
+        peer_id: String,
+        relay_session_id: Option<String>,
+    ) -> Result<()> {
         let cancel = CancellationToken::new();
-        let task = self.spawn_client_connect_flow(app, peer_addr, cancel.clone());
+        let task = self.spawn_client_connect_flow(
+            app,
+            peer_addr,
+            peer_id.clone(),
+            relay_session_id.clone(),
+            cancel.clone(),
+        );
 
         *self.inner.session.lock().await = Some(SessionRuntime {
             cancel,
@@ -351,12 +402,20 @@ impl NetworkManager {
         &self,
         app: AppHandle,
         peer_addr: SocketAddr,
+        peer_id: String,
+        relay_session_id: Option<String>,
         cancel: CancellationToken,
     ) -> JoinHandle<()> {
         let manager = self.clone();
         tokio::spawn(async move {
             if let Err(error) = manager
-                .run_client_connect_flow(app.clone(), peer_addr, cancel.clone())
+                .run_client_connect_flow(
+                    app.clone(),
+                    peer_addr,
+                    peer_id.clone(),
+                    relay_session_id,
+                    cancel.clone(),
+                )
                 .await
             {
                 if !cancel.is_cancelled() {
@@ -377,10 +436,10 @@ impl NetworkManager {
         &self,
         app: AppHandle,
         peer_addr: SocketAddr,
+        peer_id: String,
+        relay_session_id: Option<String>,
         cancel: CancellationToken,
     ) -> Result<()> {
-        let peer_id = peer_addr.to_string();
-
         self.overwrite_status(NetworkStatus {
             mode: SessionMode::Client,
             state: ConnectionState::Starting,
@@ -439,10 +498,39 @@ impl NetworkManager {
             _ = tokio::time::sleep(Duration::from_millis(HOST_PUNCH_GRACE_MS)) => {}
         }
 
-        let connection = self
+        let connection = match self
             .connect_with_retries(&endpoint, peer_addr, cancel.clone())
-            .await?;
-        punch_handle.abort();
+            .await
+        {
+            Ok(connection) => {
+                punch_handle.abort();
+                connection
+            }
+            Err(direct_error) => {
+                punch_handle.abort();
+                self.push_log(format!(
+                    "Direct QUIC path failed for {peer_addr}: {direct_error:#}"
+                ))
+                .await;
+
+                if let Some(session_id) = relay_session_id {
+                    self.push_log(format!(
+                        "Switching to relay fallback for session {session_id}."
+                    ))
+                    .await;
+                    return self
+                        .run_relay_client_tunnel(app, peer_addr, peer_id, session_id, cancel)
+                        .await
+                        .map_err(|relay_error| {
+                            anyhow!(
+                                "direct tunnel failed: {direct_error:#}\nrelay fallback failed: {relay_error:#}"
+                            )
+                        });
+                }
+
+                return Err(direct_error);
+            }
+        };
 
         let local_listener = TcpListener::bind(proxy::MINECRAFT_LOCAL_ADDR)
             .await
@@ -455,6 +543,7 @@ impl NetworkManager {
 
         self.mutate_status(|status| {
             status.state = ConnectionState::Connected;
+            status.transport_path = Some("direct-quic".into());
             status.note = Some(
                 "Соединение установлено. Подключайтесь в Minecraft к localhost:25565.".into(),
             );
@@ -473,6 +562,7 @@ impl NetworkManager {
             TunnelEstablishedEvent {
                 peer_addr: peer_addr.to_string(),
                 minecraft_addr: proxy::MINECRAFT_LOCAL_ADDR.into(),
+                transport: "direct-quic".into(),
             },
         );
 
@@ -496,6 +586,7 @@ impl NetworkManager {
         endpoint: Endpoint,
         expected_peers: Arc<RwLock<HashMap<SocketAddr, String>>>,
         live_connections: Arc<Mutex<HashMap<String, Connection>>>,
+        relay_sessions: Arc<Mutex<HashMap<String, HostRelayRuntime>>>,
         local_game_port: u16,
         cancel: CancellationToken,
     ) -> JoinHandle<()> {
@@ -524,6 +615,9 @@ impl NetworkManager {
                             .lock()
                             .await
                             .insert(peer_id.clone(), connection.clone());
+                        manager
+                            .cancel_host_relay_for_peer(relay_sessions.clone(), &peer_id)
+                            .await;
                         manager
                             .upsert_peer(
                                 peer_id.clone(),
@@ -728,6 +822,141 @@ impl NetworkManager {
         proxy::bridge_client_tcp_to_quic(tcp_stream, send, recv).await
     }
 
+    async fn run_relay_client_tunnel(
+        &self,
+        app: AppHandle,
+        peer_addr: SocketAddr,
+        peer_id: String,
+        session_id: String,
+        cancel: CancellationToken,
+    ) -> Result<()> {
+        self.mutate_status(|status| {
+            status.state = ConnectionState::Connecting;
+            status.transport_path = Some("ably-relay".into());
+            status.note = Some(
+                "Прямой QUIC не поднялся. Перехожу на резервный relay-маршрут через Ably MQTT."
+                    .into(),
+            );
+        })
+        .await;
+
+        let runtime = relay::start_client_runtime(
+            self.inner.relay.clone(),
+            session_id.clone(),
+            cancel.clone(),
+        )
+        .await
+        .with_context(|| format!("failed to start relay client session {session_id}"))?;
+
+        self.mutate_status(|status| {
+            status.state = ConnectionState::Connected;
+            status.transport_path = Some("ably-relay".into());
+            status.note = Some(
+                "Соединение установлено через relay fallback. Подключайтесь в Minecraft к localhost:25565."
+                    .into(),
+            );
+            status.peers = vec![PeerInfo {
+                peer_id: peer_id.clone(),
+                addr: peer_addr.to_string(),
+                connected: true,
+                ping_ms: None,
+            }];
+        })
+        .await;
+        self.push_log(format!(
+            "Relay fallback ready for {peer_addr} via session {session_id}."
+        ))
+        .await;
+        let _ = app.emit(
+            "tunnel_established",
+            TunnelEstablishedEvent {
+                peer_addr: peer_addr.to_string(),
+                minecraft_addr: proxy::MINECRAFT_LOCAL_ADDR.into(),
+                transport: "ably-relay".into(),
+            },
+        );
+
+        runtime.wait().await
+    }
+
+    async fn start_or_replace_host_relay(
+        &self,
+        relay_sessions: Arc<Mutex<HashMap<String, HostRelayRuntime>>>,
+        peer_id: String,
+        session_id: String,
+        local_game_port: u16,
+    ) {
+        let relay_config = self.inner.relay.clone();
+        let manager = self.clone();
+        let cancel = CancellationToken::new();
+        let task_cancel = cancel.clone();
+        let session_label = session_id.clone();
+        let session_label_for_task = session_label.clone();
+        let peer_label = peer_id.clone();
+
+        let task = tokio::spawn(async move {
+            match relay::start_host_runtime(relay_config, session_id, local_game_port, task_cancel.clone())
+                .await
+            {
+                Ok(runtime) => {
+                    if let Err(error) = runtime.wait().await {
+                        if !task_cancel.is_cancelled() {
+                            manager
+                                .set_nonfatal(format!(
+                                    "host relay session for {peer_label} failed: {error:#}"
+                                ))
+                                .await;
+                        }
+                    }
+                }
+                Err(error) => {
+                    if !task_cancel.is_cancelled() {
+                        manager
+                            .set_nonfatal(format!(
+                                "failed to bootstrap host relay session {session_label_for_task}: {error:#}"
+                            ))
+                            .await;
+                    }
+                }
+            }
+        });
+
+        let replaced = relay_sessions.lock().await.insert(
+            peer_id.clone(),
+            HostRelayRuntime {
+                session_id: session_label.clone(),
+                cancel,
+                task,
+            },
+        );
+
+        if let Some(previous) = replaced {
+            previous.cancel.cancel();
+            previous.task.abort();
+        }
+
+        self.push_log(format!(
+            "Host armed relay fallback for {peer_id} via session {session_label}."
+        ))
+        .await;
+    }
+
+    async fn cancel_host_relay_for_peer(
+        &self,
+        relay_sessions: Arc<Mutex<HashMap<String, HostRelayRuntime>>>,
+        peer_id: &str,
+    ) {
+        if let Some(runtime) = relay_sessions.lock().await.remove(peer_id) {
+            runtime.cancel.cancel();
+            runtime.task.abort();
+            self.push_log(format!(
+                "Direct QUIC won for {peer_id}; relay session {} cancelled.",
+                runtime.session_id
+            ))
+            .await;
+        }
+    }
+
     async fn connect_with_retries(
         &self,
         endpoint: &Endpoint,
@@ -783,6 +1012,11 @@ impl NetworkManager {
                     let mut live_connections = host.live_connections.lock().await;
                     for (_, connection) in live_connections.drain() {
                         connection.close(VarInt::from_u32(0), b"session-reset");
+                    }
+                    let mut relay_sessions = host.relay_sessions.lock().await;
+                    for (_, runtime) in relay_sessions.drain() {
+                        runtime.cancel.cancel();
+                        runtime.task.abort();
                     }
                 }
                 SessionControl::Client(client) => {

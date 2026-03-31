@@ -74,6 +74,7 @@ const state = {
   pendingConnects: new Set(),
   pendingKicks: new Set(),
   tunnelReady: false,
+  activeTunnelTransport: null,
   page: "home",
   preferences: loadPreferences(),
 };
@@ -234,6 +235,12 @@ function formatState(value) {
 function formatMode(mode) {
   const mapping = { idle: t("modeIdle"), host: t("modeHost"), client: t("modeClient") };
   return mapping[mode] ?? t("modeSummaryUnknown");
+}
+
+function formatTransportLabel(transport) {
+  if (transport === "ably-relay") return "relay fallback через Ably MQTT";
+  if (transport === "direct-quic") return "прямой QUIC";
+  return transport ?? "неизвестный транспорт";
 }
 
 function getSelectedServer() {
@@ -500,6 +507,7 @@ function updateHintFromStatus(status) {
 
 function renderStatus(status) {
   state.status = status;
+  state.activeTunnelTransport = status.transportPath ?? state.activeTunnelTransport;
   syncHostSessionFromStatus(status);
   connectionStateEl.textContent = formatState(status.state);
   connectionStateEl.dataset.state = status.state ?? "idle";
@@ -570,10 +578,15 @@ async function bindChannelHandlers() {
     await state.privateChannel.subscribe("connect-request", async (message) => {
       const peerAddr = message.data?.peer_addr;
       const requester = message.data?.client_id ?? "unknown";
+      const relaySessionId = message.data?.relay_session_id ?? null;
       addLog(t("incomingHandshake", { peer: requester, addr: peerAddr ?? "n/a" }));
       if (!peerAddr) return;
       try {
-        await invoke("connect_to_peer", { peerAddr, peerId: requester });
+        await invoke("connect_to_peer", {
+          peerAddr,
+          peerId: requester,
+          relaySessionId,
+        });
         addLog(t("hostPunchSent", { addr: peerAddr }));
       } catch (error) {
         addLog(`Punch error: ${String(error)}`);
@@ -705,6 +718,7 @@ async function stopSession() {
   state.pendingConnects.clear();
   state.pendingKicks.clear();
   state.tunnelReady = false;
+  state.activeTunnelTransport = null;
   setMinecraftHint(t("hintWaiting"), false);
 
   try {
@@ -758,13 +772,19 @@ async function connectToServer(server) {
   }
 
   try {
+    const relaySessionId = crypto.randomUUID();
     addLog(t("connectProgress", { room: server.roomName, addr: server.peerAddr }));
-    await invoke("connect_to_peer", { peerAddr: server.peerAddr, peerId: server.clientId });
+    await invoke("connect_to_peer", {
+      peerAddr: server.peerAddr,
+      peerId: server.clientId,
+      relaySessionId,
+    });
     const status = await waitForStatus((snapshot) => Boolean(snapshot.publicUdpAddr), 8000);
     await state.realtime.channels.get(`lobby:${server.clientId}`).publish("connect-request", {
       client_id: localClientId,
       room_name: server.roomName,
       peer_addr: status.publicUdpAddr ?? status.udpBindAddr,
+      relay_session_id: relaySessionId,
     });
     addLog(t("connectRequestSent", { host: server.clientId }));
   } catch (error) {
@@ -827,16 +847,22 @@ function rerender() {
 await listen("tunnel_established", async (event) => {
   state.pendingConnects.clear();
   state.tunnelReady = true;
+  state.activeTunnelTransport = event.payload?.transport ?? state.status?.transportPath ?? null;
   setMinecraftHint(t("hintConnected"), true);
-  addLog(t("tunnelEstablishedLog", { addr: event.payload?.minecraftAddr ?? "localhost:25565" }));
+  addLog(
+    `${t("tunnelEstablishedLog", { addr: event.payload?.minecraftAddr ?? "localhost:25565" })} (${formatTransportLabel(
+      state.activeTunnelTransport,
+    )})`,
+  );
   renderServers();
 });
 
-await listen("tunnel_failed", async () => {
+await listen("tunnel_failed", async (event) => {
   state.pendingConnects.clear();
   state.tunnelReady = false;
+  state.activeTunnelTransport = null;
   setMinecraftHint(t("hintFailed"), false);
-  addLog(t("tunnelFailedLog"));
+  addLog(event.payload?.reason ?? t("tunnelFailedLog"));
   renderServers();
 });
 
