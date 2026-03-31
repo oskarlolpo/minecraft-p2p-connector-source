@@ -32,6 +32,16 @@ pub struct PeerInfo {
     pub ping_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmBootstrap {
+    pub peer_id: String,
+    pub listen_addrs: Vec<String>,
+    pub relay_addrs: Vec<String>,
+    pub nat_status: String,
+    pub local_game_port: Option<u16>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkStatus {

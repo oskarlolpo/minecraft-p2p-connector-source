@@ -55,6 +55,8 @@ const hostSession = {
   active: false,
   roomName: "",
   hasPassword: false,
+  peerId: null,
+  listenAddrs: [],
   peerAddr: null,
   localPort: 25565,
   minecraftVersion: null,
@@ -238,13 +240,23 @@ function formatMode(mode) {
 }
 
 function formatTransportLabel(transport) {
-  if (transport === "ably-relay") return "relay fallback через Ably MQTT";
-  if (transport === "direct-quic") return "прямой QUIC";
+  if (transport === "relay-circuit" || transport === "relay-reservation") return "Circuit Relay v2";
+  if (transport === "direct-hole-punch") return "DCUtR hole punch";
+  if (transport === "direct" || transport === "direct-quic") return "Direct libp2p";
   return transport ?? "неизвестный транспорт";
 }
 
 function getSelectedServer() {
   return state.servers.find((server) => server.clientId === state.selectedServerId) ?? null;
+}
+
+function collectAdvertisedAddrs(bootstrap, status) {
+  const values = [
+    ...(bootstrap?.listenAddrs ?? []),
+    status?.publicUdpAddr ?? null,
+    status?.udpBindAddr ?? null,
+  ].filter(Boolean);
+  return [...new Set(values)];
 }
 
 function renderSelectedServer() {
@@ -253,7 +265,7 @@ function renderSelectedServer() {
   selectedEndpointEl.textContent = selected?.peerAddr ?? "n/a";
   selectedMetaEl.textContent = selected
     ? t("selectedMetaTemplate", {
-        host: `${selected.hostName}${selected.clientId === localClientId ? " (you)" : ""}`,
+        host: `${selected.hostName}${selected.clientId === localClientId ? " (you)" : ""} · ${selected.peerId}`,
         version: selected.minecraftVersion ?? t("serverUnknownVersion"),
         slots: selected.slots,
         password: selected.hasPassword ? t("selectedMetaPassword") : "",
@@ -442,18 +454,21 @@ function hydrateServers(members) {
   state.servers = members
     .map((member) => {
       const data = member.data ?? {};
+      const peerAddrs = Array.isArray(data.listen_addrs) ? data.listen_addrs.filter(Boolean) : [];
       return {
         clientId: member.clientId,
         roomName: data.room_name ?? "Unnamed room",
         hostName: data.host_name ?? member.clientId,
         slots: data.slots ?? "1/30",
         hasPassword: Boolean(data.has_password),
-        peerAddr: data.peer_addr ?? null,
+        peerId: data.peer_id ?? null,
+        peerAddrs,
+        peerAddr: peerAddrs[0] ?? null,
         localPort: data.local_port ?? 25565,
         minecraftVersion: data.minecraft_version ?? null,
       };
     })
-    .filter((server) => Boolean(server.peerAddr));
+    .filter((server) => Boolean(server.peerId) && server.peerAddrs.length > 0);
 
   if (state.selectedServerId && !state.servers.find((server) => server.clientId === state.selectedServerId)) {
     state.selectedServerId = null;
@@ -470,7 +485,8 @@ function buildPresencePayload(status) {
     host_name: localClientId,
     slots: `${Math.max(1, (status?.peerCount ?? 0) + 1)}/30`,
     has_password: hostSession.hasPassword,
-    peer_addr: hostSession.peerAddr,
+    peer_id: hostSession.peerId,
+    listen_addrs: hostSession.listenAddrs,
     local_port: hostSession.localPort,
     minecraft_version: hostSession.minecraftVersion ?? status?.minecraftVersion ?? null,
   };
@@ -481,12 +497,14 @@ function syncHostSessionFromStatus(status) {
     hostSession.active = true;
     hostSession.roomName = status.roomCode ?? hostSession.roomName;
     hostSession.hasPassword = Boolean(status.passwordProtected);
-    hostSession.peerAddr = status.publicUdpAddr ?? status.udpBindAddr ?? hostSession.peerAddr;
+    hostSession.peerAddr = hostSession.listenAddrs[0] ?? status.publicUdpAddr ?? status.udpBindAddr ?? hostSession.peerAddr;
     hostSession.localPort = status.localGamePort ?? hostSession.localPort;
     hostSession.minecraftVersion = status.minecraftVersion ?? hostSession.minecraftVersion;
     return;
   }
   hostSession.active = false;
+  hostSession.peerId = null;
+  hostSession.listenAddrs = [];
   hostSession.peerAddr = null;
   hostSession.minecraftVersion = null;
 }
@@ -507,6 +525,9 @@ function updateHintFromStatus(status) {
 
 function renderStatus(status) {
   state.status = status;
+  if (["connected", "error", "idle", "hosting"].includes(status.state)) {
+    state.pendingConnects.clear();
+  }
   state.activeTunnelTransport = status.transportPath ?? state.activeTunnelTransport;
   syncHostSessionFromStatus(status);
   connectionStateEl.textContent = formatState(status.state);
@@ -565,34 +586,13 @@ async function ensureChannels() {
 
 async function bindChannelHandlers() {
   await ensureChannels();
-  if (!state.lobbyChannel || !state.privateChannel) return;
+  if (!state.lobbyChannel) return;
 
   if (!state.lobbyChannel.__mcp2pPresenceBound) {
     await state.lobbyChannel.presence.subscribe("enter", () => void refreshLobby());
     await state.lobbyChannel.presence.subscribe("update", () => void refreshLobby());
     await state.lobbyChannel.presence.subscribe("leave", () => void refreshLobby());
     state.lobbyChannel.__mcp2pPresenceBound = true;
-  }
-
-  if (!state.privateChannel.__mcp2pMessageBound) {
-    await state.privateChannel.subscribe("connect-request", async (message) => {
-      const peerAddr = message.data?.peer_addr;
-      const requester = message.data?.client_id ?? "unknown";
-      const relaySessionId = message.data?.relay_session_id ?? null;
-      addLog(t("incomingHandshake", { peer: requester, addr: peerAddr ?? "n/a" }));
-      if (!peerAddr) return;
-      try {
-        await invoke("connect_to_peer", {
-          peerAddr,
-          peerId: requester,
-          relaySessionId,
-        });
-        addLog(t("hostPunchSent", { addr: peerAddr }));
-      } catch (error) {
-        addLog(`Punch error: ${String(error)}`);
-      }
-    });
-    state.privateChannel.__mcp2pMessageBound = true;
   }
 }
 
@@ -621,7 +621,8 @@ async function syncPresence(status, { force = false, enter = false } = {}) {
   if (
     !hostSession.active ||
     !state.lobbyChannel ||
-    !hostSession.peerAddr ||
+    !hostSession.peerId ||
+    !hostSession.listenAddrs.length ||
     state.syncingPresence ||
     state.realtime?.connection.state !== "connected"
   ) {
@@ -693,13 +694,18 @@ async function startHosting() {
   setMinecraftHint(t("hintWaiting"), false);
 
   try {
-    await invoke("start_hosting", { roomName, password, localPort });
-    const status = await waitForStatus((snapshot) => Boolean(snapshot.publicUdpAddr));
+    const bootstrap = await invoke("start_hosting", { roomName, password, localPort });
+    const status = await waitForStatus(
+      (snapshot) => snapshot.mode === "host" && ["waitingForPeer", "hosting", "connected"].includes(snapshot.state),
+      8000,
+    );
     renderStatus(status);
     hostSession.active = true;
     hostSession.roomName = roomName;
     hostSession.hasPassword = Boolean(password);
-    hostSession.peerAddr = status.publicUdpAddr ?? status.udpBindAddr;
+    hostSession.peerId = bootstrap.peerId ?? null;
+    hostSession.listenAddrs = collectAdvertisedAddrs(bootstrap, status);
+    hostSession.peerAddr = hostSession.listenAddrs[0] ?? "n/a";
     hostSession.localPort = localPort;
     hostSession.minecraftVersion = status.minecraftVersion ?? null;
     hostSession.presencePayload = null;
@@ -730,6 +736,8 @@ async function stopSession() {
     hostSession.active = false;
     hostSession.roomName = "";
     hostSession.hasPassword = false;
+    hostSession.peerId = null;
+    hostSession.listenAddrs = [];
     hostSession.peerAddr = null;
     hostSession.localPort = 25565;
     hostSession.minecraftVersion = null;
@@ -772,21 +780,17 @@ async function connectToServer(server) {
   }
 
   try {
-    const relaySessionId = crypto.randomUUID();
     addLog(t("connectProgress", { room: server.roomName, addr: server.peerAddr }));
     await invoke("connect_to_peer", {
-      peerAddr: server.peerAddr,
-      peerId: server.clientId,
-      relaySessionId,
+      peerId: server.peerId,
+      peerAddrs: server.peerAddrs,
     });
-    const status = await waitForStatus((snapshot) => Boolean(snapshot.publicUdpAddr), 8000);
-    await state.realtime.channels.get(`lobby:${server.clientId}`).publish("connect-request", {
-      client_id: localClientId,
-      room_name: server.roomName,
-      peer_addr: status.publicUdpAddr ?? status.udpBindAddr,
-      relay_session_id: relaySessionId,
-    });
-    addLog(t("connectRequestSent", { host: server.clientId }));
+    const status = await waitForStatus(
+      (snapshot) => snapshot.mode === "client" && ["connecting", "connected"].includes(snapshot.state),
+      8000,
+    );
+    renderStatus(status);
+    addLog(`libp2p dial started for ${server.peerId}.`);
   } catch (error) {
     state.pendingConnects.delete(server.clientId);
     setMinecraftHint(t("hintFailed"), false);
@@ -844,26 +848,28 @@ function rerender() {
   );
 }
 
-await listen("tunnel_established", async (event) => {
+await listen("peer_connected", async (event) => {
   state.pendingConnects.clear();
   state.tunnelReady = true;
-  state.activeTunnelTransport = event.payload?.transport ?? state.status?.transportPath ?? null;
+  state.activeTunnelTransport = event.payload?.relayed ? "relay-circuit" : "direct";
   setMinecraftHint(t("hintConnected"), true);
   addLog(
-    `${t("tunnelEstablishedLog", { addr: event.payload?.minecraftAddr ?? "localhost:25565" })} (${formatTransportLabel(
+    `${t("tunnelEstablishedLog", { addr: "localhost:25565" })} (${formatTransportLabel(
       state.activeTunnelTransport,
     )})`,
   );
+  const status = await invoke("get_status");
+  renderStatus(status);
   renderServers();
 });
 
-await listen("tunnel_failed", async (event) => {
-  state.pendingConnects.clear();
-  state.tunnelReady = false;
-  state.activeTunnelTransport = null;
-  setMinecraftHint(t("hintFailed"), false);
-  addLog(event.payload?.reason ?? t("tunnelFailedLog"));
-  renderServers();
+await listen("relay_active", async (event) => {
+  addLog(`Relay active: ${event.payload?.relayAddr ?? "n/a"}`);
+});
+
+await listen("hole_punch_success", async (event) => {
+  state.activeTunnelTransport = "direct-quic";
+  addLog(`Hole punch success for ${event.payload?.peerId ?? "peer"}.`);
 });
 
 navHomeEl.addEventListener("click", () => setPage("home"));

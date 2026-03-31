@@ -3,18 +3,16 @@
     windows_subsystem = "windows"
 )]
 
-mod cert;
 mod models;
 mod network;
-mod signaling;
 
-use models::NetworkStatus;
-use network::manager::NetworkManager;
+use models::{NetworkStatus, SwarmBootstrap};
+use network::network_swarm::NetworkSwarmManager;
 use tauri::{AppHandle, State};
 
 #[derive(Clone)]
 struct AppState {
-    manager: NetworkManager,
+    manager: NetworkSwarmManager,
 }
 
 #[tauri::command]
@@ -24,7 +22,7 @@ async fn start_hosting(
     room_name: String,
     password: Option<String>,
     local_port: u16,
-) -> Result<String, String> {
+) -> Result<SwarmBootstrap, String> {
     state
         .manager
         .start_hosting(app, room_name, password, local_port)
@@ -45,13 +43,12 @@ async fn stop_hosting(state: State<'_, AppState>) -> Result<(), String> {
 async fn connect_to_peer(
     app: AppHandle,
     state: State<'_, AppState>,
-    peer_addr: String,
-    peer_id: Option<String>,
-    relay_session_id: Option<String>,
+    peer_id: String,
+    peer_addrs: Vec<String>,
 ) -> Result<(), String> {
     state
         .manager
-        .connect_to_peer(app, peer_addr, peer_id, relay_session_id)
+        .connect_to_peer(app, peer_id, peer_addrs)
         .await
         .map_err(|error| format!("{error:#}"))
 }
@@ -74,13 +71,13 @@ fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "minecraft_p2p_connector=info,quinn=warn".into()),
+                .unwrap_or_else(|_| "minecraft_p2p_connector=info,libp2p=warn".into()),
         )
         .init();
 
     tauri::Builder::default()
         .manage(AppState {
-            manager: NetworkManager::new(),
+            manager: NetworkSwarmManager::new(),
         })
         .invoke_handler(tauri::generate_handler![
             start_hosting,

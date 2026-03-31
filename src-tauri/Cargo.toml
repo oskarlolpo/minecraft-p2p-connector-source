@@ -2,7 +2,7 @@
 name = "minecraft-p2p-connector"
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.83"
 description = "Low-latency Minecraft Java P2P LAN connector over QUIC"
 license = "MIT"
 
@@ -11,15 +11,14 @@ tauri-build = { version = "2.0" }
 
 [dependencies]
 anyhow = "1.0"
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-rcgen = "0.13"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+futures = "0.3"
+libp2p = { version = "0.56.0", features = ["autonat", "dcutr", "dns", "identify", "macros", "noise", "quic", "relay", "tcp", "tls", "tokio", "yamux"] }
+libp2p-swarm = "0.47.1"
+libp2p-stream = "0.4.0-alpha"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-rumqttc = "0.25.1"
 tauri = { version = "2.0", features = ["wry"] }
 tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
-tokio-util = { version = "0.7", features = ["rt"] }
+tokio-util = { version = "0.7", features = ["compat", "rt"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-uuid = { version = "1.15", features = ["v4", "serde"] }
