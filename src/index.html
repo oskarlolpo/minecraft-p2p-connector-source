@@ -83,7 +83,10 @@
         <section class="panel mt-4 flex-1">
           <div class="flex items-center justify-between gap-3">
             <p class="panel-label">Event Log</p>
-            <span class="text-xs text-white/35">professional debugging feed</span>
+            <div class="flex items-center gap-3">
+              <span class="text-xs text-white/35">professional debugging feed</span>
+              <button id="copy-logs" class="ghost-button px-3 py-2 text-xs">Copy Log</button>
+            </div>
           </div>
           <div id="logs" class="mt-3 max-h-[200px] space-y-2 overflow-auto"></div>
         </section>
