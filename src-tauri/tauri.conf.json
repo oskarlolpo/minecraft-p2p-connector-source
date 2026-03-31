@@ -16,10 +16,15 @@
       {
         "label": "main",
         "title": "Minecraft P2P Connector",
-        "width": 1240,
-        "height": 820,
-        "resizable": true,
-        "fullscreen": false
+        "width": 520,
+        "height": 700,
+        "minWidth": 520,
+        "minHeight": 700,
+        "maxWidth": 520,
+        "maxHeight": 700,
+        "resizable": false,
+        "fullscreen": false,
+        "center": true
       }
     ],
     "security": {

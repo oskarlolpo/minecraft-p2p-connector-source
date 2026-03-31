@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::{
     cert::{build_client_config, build_server_config},
+    local_signaling::run_local_signaling,
     models::{ConnectionState, NetworkStatus, PeerInfo, SessionMode},
     signaling::{punch_remote, register_udp_mapping, ClientSignal, ServerSignal, SignalingConfig},
 };
@@ -39,6 +40,7 @@ struct Inner {
     session: Mutex<Option<SessionRuntime>>,
     status: RwLock<NetworkStatus>,
     signaling: SignalingConfig,
+    embedded_signaling_started: Mutex<bool>,
 }
 
 struct SessionRuntime {
@@ -49,10 +51,11 @@ struct SessionRuntime {
 impl NetworkManager {
     pub fn new() -> Self {
         let signaling = SignalingConfig::from_env();
-        let status = NetworkStatus {
+        let mut status = NetworkStatus {
             signaling_server: signaling.ws_url.clone(),
             ..Default::default()
         };
+        status.logs.push("Приложение запущено.".into());
 
         Self {
             inner: Arc::new(Inner {
@@ -60,6 +63,7 @@ impl NetworkManager {
                 session: Mutex::new(None),
                 status: RwLock::new(status),
                 signaling,
+                embedded_signaling_started: Mutex::new(false),
             }),
         }
     }
@@ -109,13 +113,17 @@ impl NetworkManager {
             mode: SessionMode::Host,
             state: ConnectionState::Starting,
             signaling_server: self.inner.signaling.ws_url.clone(),
-            note: Some("Создаю комнату и готовлю UDP endpoint.".into()),
+            note: Some("Подготавливаю комнату.".into()),
+            logs: vec!["Создание host-сессии.".into()],
             ..Default::default()
         })
         .await;
 
         let (udp_socket, punch_socket, udp_bind_addr) = Self::bind_shared_udp_socket()?;
         let (server_config, server_cert) = build_server_config()?;
+        self.push_log(format!("Локальный UDP сокет: {udp_bind_addr}"))
+            .await;
+
         let signal_socket = self.connect_signaling_socket().await?;
         let (mut writer, mut reader) = signal_socket.split();
 
@@ -148,7 +156,6 @@ impl NetworkManager {
         .context("failed to create host QUIC endpoint")?;
 
         let cancel = CancellationToken::new();
-
         self.overwrite_status(NetworkStatus {
             mode: SessionMode::Host,
             state: ConnectionState::Hosting,
@@ -156,7 +163,11 @@ impl NetworkManager {
             udp_bind_addr: Some(udp_bind_addr.to_string()),
             public_udp_addr: Some(public_udp_addr.to_string()),
             signaling_server: self.inner.signaling.ws_url.clone(),
-            note: Some("Комната создана. Раздайте code и ждите peer'ов.".into()),
+            note: Some("Комната готова. Отдайте код другу.".into()),
+            logs: vec![
+                format!("Комната {room_code} создана."),
+                format!("Публичный UDP endpoint: {public_udp_addr}"),
+            ],
             ..Default::default()
         })
         .await;
@@ -188,7 +199,8 @@ impl NetworkManager {
             state: ConnectionState::Starting,
             room_code: Some(room_code.clone()),
             signaling_server: self.inner.signaling.ws_url.clone(),
-            note: Some("Резервирую локальный proxy и жду адрес хоста.".into()),
+            note: Some("Ищу хост по room code.".into()),
+            logs: vec![format!("Подключение к комнате {room_code}.")],
             ..Default::default()
         })
         .await;
@@ -216,11 +228,11 @@ impl NetworkManager {
             status.room_code = Some(room_code.clone());
             status.udp_bind_addr = Some(udp_bind_addr.to_string());
             status.public_udp_addr = Some(public_udp_addr.to_string());
-            status.note =
-                Some("Signal server ждёт регистрацию хоста и выдаст его UDP endpoint.".into());
-            status.last_error = None;
+            status.note = Some("Жду ответ от signaling server.".into());
         })
         .await;
+        self.push_log(format!("Локальный UDP сокет: {udp_bind_addr}"))
+            .await;
 
         let (host_peer_id, host_addr, host_cert) = loop {
             match Self::recv_signal(&mut reader).await? {
@@ -257,10 +269,11 @@ impl NetworkManager {
                 connected: false,
                 ping_ms: None,
             }];
-            status.peer_count = 0;
-            status.note = Some("Пробиваю NAT и поднимаю QUIC к хосту.".into());
+            status.note = Some("Пробиваю NAT и устанавливаю QUIC.".into());
         })
         .await;
+        self.push_log(format!("Получен адрес хоста: {host_addr}"))
+            .await;
 
         let cancel = CancellationToken::new();
         let punch_handle = tokio::spawn({
@@ -293,11 +306,11 @@ impl NetworkManager {
                 connected: true,
                 ping_ms: Some(connection.rtt().as_millis() as u64),
             }];
-            status.peer_count = 1;
-            status.note =
-                Some("Подключено. Запускайте Minecraft Java и заходите на localhost.".into());
+            status.note = Some("Подключено. Открывайте Minecraft и заходите на localhost.".into());
         })
         .await;
+        self.push_log("Локальный proxy на 127.0.0.1:25565 поднят.".into())
+            .await;
 
         let proxy_task =
             self.spawn_client_proxy_loop(local_listener, connection.clone(), cancel.clone());
@@ -351,6 +364,9 @@ impl NetworkManager {
                                 true,
                                 Some(connection.rtt().as_millis() as u64),
                             )
+                            .await;
+                        manager
+                            .push_log(format!("Peer {peer_id} подключился с {remote}"))
                             .await;
 
                         let connection_cancel = cancel.clone();
@@ -414,6 +430,9 @@ impl NetworkManager {
                         manager
                             .upsert_peer(peer_id.clone(), addr, false, None)
                             .await;
+                        manager
+                            .push_log(format!("Получен peer {peer_id} с адресом {addr}"))
+                            .await;
 
                         let punch_cancel = cancel.clone();
                         let socket = punch_socket.clone();
@@ -424,6 +443,7 @@ impl NetworkManager {
                     }
                     Ok(ServerSignal::PeerLeft { peer_id }) => {
                         manager.remove_peer(&peer_id).await;
+                        manager.push_log(format!("Peer {peer_id} вышел.")).await;
                     }
                     Ok(ServerSignal::Error { message }) => {
                         manager
@@ -555,7 +575,7 @@ impl NetworkManager {
                             .mark_fatal(
                                 SessionMode::Client,
                                 None,
-                                &anyhow!("хост вышел из комнаты или закрыл signaling session"),
+                                &anyhow!("хост вышел из комнаты"),
                             )
                             .await;
                         break;
@@ -570,7 +590,7 @@ impl NetworkManager {
                         if !cancel.is_cancelled() {
                             manager
                                 .set_nonfatal(format!(
-                                    "signaling server больше недоступен, но P2P сессия уже поднята: {error:#}"
+                                    "signaling server недоступен, но P2P сессия уже поднята: {error:#}"
                                 ))
                                 .await;
                         }
@@ -640,9 +660,7 @@ impl NetworkManager {
         for attempt in 1..=6 {
             self.mutate_status(|status| {
                 status.state = ConnectionState::Connecting;
-                status.note = Some(format!(
-                    "QUIC handshake с хостом {host_addr}, попытка {attempt}/6."
-                ));
+                status.note = Some(format!("Handshake с хостом, попытка {attempt}/6."));
             })
             .await;
 
@@ -663,10 +681,37 @@ impl NetworkManager {
     }
 
     async fn connect_signaling_socket(&self) -> Result<SignalSocket> {
+        self.ensure_embedded_signaling().await?;
         let (socket, _) = connect_async(self.inner.signaling.ws_url.as_str())
             .await
             .context("failed to connect to signaling websocket")?;
         Ok(socket)
+    }
+
+    async fn ensure_embedded_signaling(&self) -> Result<()> {
+        if !self.should_start_embedded_signaling() {
+            return Ok(());
+        }
+
+        let mut started = self.inner.embedded_signaling_started.lock().await;
+        if *started {
+            return Ok(());
+        }
+
+        run_local_signaling(self.inner.signaling.clone()).await?;
+        *started = true;
+        drop(started);
+        self.push_log("Встроенный signaling server запущен локально.".into())
+            .await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        Ok(())
+    }
+
+    fn should_start_embedded_signaling(&self) -> bool {
+        let ws = self.inner.signaling.ws_url.to_ascii_lowercase();
+        let udp_ip = self.inner.signaling.udp_addr.ip().to_string();
+        (ws.contains("127.0.0.1") || ws.contains("localhost"))
+            && (udp_ip == "127.0.0.1" || udp_ip == "::1")
     }
 
     async fn send_signal(writer: &mut SignalWriter, message: &ClientSignal) -> Result<()> {
@@ -707,11 +752,12 @@ impl NetworkManager {
         }
         drop(session);
 
-        self.overwrite_status(NetworkStatus {
+        let mut status = NetworkStatus {
             signaling_server: self.inner.signaling.ws_url.clone(),
             ..Default::default()
-        })
-        .await;
+        };
+        status.logs.push("Сессия сброшена.".into());
+        self.overwrite_status(status).await;
     }
 
     async fn overwrite_status(&self, status: NetworkStatus) {
@@ -725,6 +771,16 @@ impl NetworkManager {
         let mut status = self.inner.status.write().await;
         update(&mut status);
         status.peer_count = status.peers.iter().filter(|peer| peer.connected).count();
+    }
+
+    async fn push_log(&self, entry: String) {
+        self.mutate_status(|status| {
+            status.logs.insert(0, entry);
+            if status.logs.len() > 40 {
+                status.logs.truncate(40);
+            }
+        })
+        .await;
     }
 
     async fn upsert_peer(
@@ -776,7 +832,7 @@ impl NetworkManager {
 
             if status.mode == SessionMode::Host {
                 status.state = ConnectionState::Hosting;
-                status.note = Some("Peer отключился, комната остаётся активной.".into());
+                status.note = Some("Peer отключился, комната остаётся открытой.".into());
             }
         })
         .await;
@@ -790,10 +846,12 @@ impl NetworkManager {
     }
 
     async fn set_nonfatal(&self, message: String) {
+        let log_message = message.clone();
         self.mutate_status(|status| {
             status.last_error = Some(message);
         })
         .await;
+        self.push_log(log_message).await;
     }
 
     async fn mark_fatal(
@@ -802,13 +860,15 @@ impl NetworkManager {
         room_code: Option<String>,
         error: &anyhow::Error,
     ) {
+        let formatted = format!("{error:#}");
         self.overwrite_status(NetworkStatus {
             mode,
             state: ConnectionState::Error,
             room_code,
             signaling_server: self.inner.signaling.ws_url.clone(),
-            last_error: Some(format!("{error:#}")),
-            note: Some("Сессия завершилась ошибкой. Исправьте проблему и переподключитесь.".into()),
+            last_error: Some(formatted.clone()),
+            note: Some("Сессия завершилась ошибкой.".into()),
+            logs: vec![formatted],
             ..Default::default()
         })
         .await;

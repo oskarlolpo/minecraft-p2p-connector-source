@@ -45,6 +45,7 @@ pub struct NetworkStatus {
     pub note: Option<String>,
     pub last_error: Option<String>,
     pub signaling_server: String,
+    pub logs: Vec<String>,
 }
 
 impl Default for NetworkStatus {
@@ -60,6 +61,7 @@ impl Default for NetworkStatus {
             note: None,
             last_error: None,
             signaling_server: String::new(),
+            logs: Vec::new(),
         }
     }
 }
