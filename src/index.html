@@ -6,113 +6,166 @@
     <title>Blood Paradise Hub</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
-  <body class="min-h-screen bg-[#0f0f0f] text-white">
-    <main class="mx-auto flex min-h-screen w-full max-w-[520px] flex-col p-4">
-      <section class="app-shell">
-        <header class="header-strip">
-          <div>
-            <p class="eyebrow">Blood Paradise</p>
-            <h1 class="mt-2 text-[28px] font-semibold tracking-tight">Hub</h1>
-            <p class="mt-2 text-sm text-white/60">P2P matchmaking для Minecraft Java без VPN-адаптеров.</p>
+  <body>
+    <div class="app-frame">
+      <aside class="sidebar">
+        <div class="sidebar-stack">
+          <button class="nav-icon nav-icon-active" type="button" aria-label="Главная">
+            <span>⌂</span>
+          </button>
+          <button class="nav-icon" type="button" aria-label="Настройки">
+            <span>⚙</span>
+          </button>
+        </div>
+
+        <div class="profile-badge" aria-hidden="true">BP</div>
+      </aside>
+
+      <main class="content">
+        <header class="hero-panel">
+          <div class="hero-copy">
+            <div class="hero-chip">ГЛАВНАЯ</div>
+            <h1>Blood Paradise Hub</h1>
+            <p>P2P matchmaking для Minecraft Java без VPN-адаптеров.</p>
           </div>
-          <div class="status-pill" id="connection-state">Offline</div>
+
+          <div class="hero-side">
+            <div class="status-pill" id="connection-state">Idle</div>
+            <p class="ably-caption">Ably Presence: <span id="ably-state">connecting</span></p>
+          </div>
         </header>
 
-        <section class="panel mt-4">
-          <div class="flex items-center justify-between gap-3">
+        <section class="toolbar-row">
+          <button id="open-host-modal" class="primary-cta" type="button">ХОСТИТЬ СЕРВЕР</button>
+          <button id="refresh-lobby" class="ghost-button compact" type="button">Refresh</button>
+        </section>
+
+        <section class="panel active-host-panel">
+          <div class="panel-header">
             <div>
-              <p class="panel-label">Global Lobby</p>
-              <p class="mt-1 text-xs text-white/50">Ably Presence: <span id="ably-state">connecting</span></p>
+              <p class="panel-title">ВАШ АКТИВНЫЙ ХОСТ</p>
+              <p class="panel-subtitle">Локальный QUIC tunnel и подключённые игроки.</p>
             </div>
-            <button id="refresh-lobby" class="ghost-button">Refresh</button>
+            <button id="stop-button" class="ghost-button compact danger-ghost" type="button">STOP</button>
           </div>
 
-          <div class="mt-4 grid grid-cols-1 gap-3">
-            <label class="field">
-              <span class="field-label">Room Name</span>
-              <input id="room-name" type="text" maxlength="32" placeholder="Blood Paradise #1" />
-            </label>
-
-            <label class="field">
-              <span class="field-label">Password</span>
-              <input id="room-password" type="password" maxlength="32" placeholder="Optional" />
-            </label>
-
-            <label class="field">
-              <span class="field-label">Local Game Port</span>
-              <input id="local-game-port" type="number" min="1" max="65535" value="25565" />
-            </label>
+          <div id="active-host-card" class="active-host-card empty">
+            <div class="host-card-body">
+              <div class="host-thumb">◼</div>
+              <div class="host-meta">
+                <h2>Хост не запущен</h2>
+                <p>Откройте модалку и создайте комнату, чтобы опубликовать сервер в лобби.</p>
+              </div>
+            </div>
           </div>
 
-          <div class="mt-4 flex gap-3">
-            <button id="host-button" class="primary-button flex-1">Host</button>
-            <button id="stop-button" class="danger-button flex-1">Stop</button>
+          <div class="status-grid">
+            <div class="mini-stat">
+              <span class="mini-label">Lobby</span>
+              <strong id="lobby-count">0 servers</strong>
+            </div>
+            <div class="mini-stat">
+              <span class="mini-label">Endpoint</span>
+              <strong id="public-endpoint">n/a</strong>
+            </div>
           </div>
 
-          <div class="mt-4 info-grid">
-            <div class="mini-panel">
-              <span class="panel-label">Lobby</span>
-              <span id="lobby-count" class="mini-value">0 servers</span>
+          <div class="host-peers">
+            <div class="panel-header compact-header">
+              <p class="panel-title">ИГРОКИ</p>
+              <span id="peer-count" class="soft-counter">0 peers</span>
             </div>
-            <div class="mini-panel">
-              <span class="panel-label">Endpoint</span>
-              <span id="public-endpoint" class="mini-value break-all">n/a</span>
-            </div>
+            <div id="peer-list" class="peer-list"></div>
           </div>
         </section>
 
-        <section class="panel mt-4 flex-1">
-          <div class="flex items-center justify-between gap-3">
+        <section class="panel browser-panel">
+          <div class="panel-header">
             <div>
-              <p class="panel-label">Server Browser</p>
-              <p class="mt-1 text-xs text-white/50">Presence list обновляется в realtime.</p>
+              <p class="panel-title">ПУБЛИЧНЫЕ СЕРВЕРЫ</p>
+              <p class="panel-subtitle">Presence list обновляется в realtime.</p>
             </div>
-            <div class="mini-value" id="selected-server">No selection</div>
+            <span class="soft-counter" id="selected-server">No selection</span>
           </div>
 
-          <div class="mini-panel mt-4">
-            <span class="panel-label">Selected Target</span>
-            <span id="selected-endpoint" class="mini-value break-all">n/a</span>
-            <div class="mt-3 flex gap-3">
-              <button id="copy-selected-endpoint" class="ghost-button flex-1 px-3 py-2 text-xs">Copy IP</button>
-              <button id="connect-selected" class="primary-button flex-1 px-3 py-2 text-xs">Connect Selected</button>
+          <div class="selected-target">
+            <div class="selected-copy">
+              <span class="mini-label">Selected Target</span>
+              <strong id="selected-endpoint">n/a</strong>
+              <p id="selected-meta" class="selected-meta">Выберите сервер из списка ниже.</p>
+            </div>
+            <div class="selected-actions">
+              <button id="copy-selected-endpoint" class="ghost-button compact" type="button">Copy IP</button>
+              <button id="connect-selected" class="primary-button compact" type="button">Connect</button>
             </div>
           </div>
 
-          <div id="server-list" class="mt-4 space-y-3"></div>
+          <div class="server-table-head">
+            <span>Имя</span>
+            <span>Игроки</span>
+            <span>Действие</span>
+          </div>
+          <div id="server-list" class="server-list"></div>
         </section>
 
-        <section class="panel mt-4">
-          <div class="flex items-center justify-between gap-3">
+        <section class="panel tunnel-panel">
+          <div class="panel-header">
             <div>
-              <p class="panel-label">Tunnel Status</p>
-              <p id="status-note" class="mt-1 text-xs text-white/50">Idle</p>
+              <p class="panel-title">TUNNEL STATUS</p>
+              <p id="status-note" class="panel-subtitle">Idle</p>
             </div>
-            <div class="mini-value" id="peer-count">0 peers</div>
           </div>
 
-          <div
-            id="minecraft-target-hint"
-            class="mt-4 rounded-2xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-5 text-center text-2xl font-semibold text-emerald-300 opacity-0 transition"
-          >
+          <div id="minecraft-target-hint" class="minecraft-hint">
             Ожидание туннеля...
           </div>
-
-          <div class="mt-3 space-y-2" id="peer-list"></div>
         </section>
 
-        <section class="panel mt-4 flex-1">
-          <div class="flex items-center justify-between gap-3">
-            <p class="panel-label">Event Log</p>
-            <div class="flex items-center gap-3">
-              <span class="text-xs text-white/35">professional debugging feed</span>
-              <button id="copy-logs" class="ghost-button px-3 py-2 text-xs">Copy Log</button>
+        <section class="panel log-panel">
+          <div class="panel-header">
+            <div>
+              <p class="panel-title">EVENT LOG</p>
+              <p class="panel-subtitle">professional debugging feed</p>
             </div>
+            <button id="copy-logs" class="ghost-button compact" type="button">Copy Log</button>
           </div>
-          <div id="logs" class="mt-3 max-h-[200px] space-y-2 overflow-auto"></div>
+          <div id="logs" class="log-list"></div>
         </section>
-      </section>
-    </main>
+      </main>
+    </div>
+
+    <div id="host-modal" class="modal-shell hidden" aria-hidden="true">
+      <div class="modal-backdrop" data-close-modal="true"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="host-modal-title">
+        <div class="panel-header">
+          <div>
+            <p class="panel-title">КОНФИГУРАЦИЯ ХОСТА</p>
+            <h2 id="host-modal-title">Создать новую комнату</h2>
+          </div>
+          <button id="close-modal" class="ghost-icon" type="button" aria-label="Закрыть">×</button>
+        </div>
+
+        <label class="field-group">
+          <span>Имя сервера</span>
+          <input id="room-name" type="text" maxlength="32" placeholder="Diamond Realm" />
+        </label>
+
+        <label class="field-group">
+          <span>Локальный порт игры</span>
+          <input id="local-game-port" type="number" min="1" max="65535" value="25565" />
+        </label>
+
+        <label class="field-group">
+          <span>Пароль</span>
+          <input id="room-password" type="password" maxlength="32" placeholder="Необязательно" />
+        </label>
+
+        <div class="modal-actions">
+          <button id="close-modal-secondary" class="ghost-button compact" type="button">Отмена</button>
+          <button id="host-button" class="primary-button compact" type="button">Хостить</button>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="./main.js"></script>
   </body>

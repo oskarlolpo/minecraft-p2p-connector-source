@@ -9,6 +9,10 @@ const POLL_INTERVAL_MS = 1500;
 const SAFE_RELEASE_STATES = new Set(["initialized", "detached", "failed"]);
 const SAFE_SKIP_STATES = new Set(["detached", "failed", "suspended"]);
 
+const modalEl = document.querySelector("#host-modal");
+const openHostModalEl = document.querySelector("#open-host-modal");
+const closeModalEl = document.querySelector("#close-modal");
+const closeModalSecondaryEl = document.querySelector("#close-modal-secondary");
 const roomNameEl = document.querySelector("#room-name");
 const roomPasswordEl = document.querySelector("#room-password");
 const localGamePortEl = document.querySelector("#local-game-port");
@@ -27,9 +31,11 @@ const lobbyCountEl = document.querySelector("#lobby-count");
 const publicEndpointEl = document.querySelector("#public-endpoint");
 const selectedServerEl = document.querySelector("#selected-server");
 const selectedEndpointEl = document.querySelector("#selected-endpoint");
+const selectedMetaEl = document.querySelector("#selected-meta");
 const statusNoteEl = document.querySelector("#status-note");
 const peerCountEl = document.querySelector("#peer-count");
 const minecraftTargetHintEl = document.querySelector("#minecraft-target-hint");
+const activeHostCardEl = document.querySelector("#active-host-card");
 
 const hostSession = {
   active: false,
@@ -72,7 +78,7 @@ function addLog(message) {
     second: "2-digit",
   });
   state.logBuffer.unshift(`[${stamp}] ${message}`);
-  state.logBuffer = state.logBuffer.slice(0, 100);
+  state.logBuffer = state.logBuffer.slice(0, 120);
   renderLogs();
 }
 
@@ -81,22 +87,30 @@ function currentLogLines() {
   if (state.status?.logs?.length) {
     combined.push(...state.status.logs);
   }
-  return [...new Set(combined)].slice(0, 80);
+  return [...new Set(combined)].slice(0, 100);
 }
 
 function renderLogs() {
   const lines = currentLogLines();
   logsEl.innerHTML = lines.length
     ? lines.map((entry) => `<div class="log-entry">${escapeHtml(entry)}</div>`).join("")
-    : `<div class="log-entry text-white/35">Лог пока пуст.</div>`;
+    : '<div class="empty-state">Лог пока пуст.</div>';
+}
+
+function openModal() {
+  modalEl.classList.remove("hidden");
+  modalEl.setAttribute("aria-hidden", "false");
+  window.setTimeout(() => roomNameEl.focus(), 40);
+}
+
+function closeModal() {
+  modalEl.classList.add("hidden");
+  modalEl.setAttribute("aria-hidden", "true");
 }
 
 function setMinecraftHint(text, active = false) {
   minecraftTargetHintEl.textContent = text;
-  minecraftTargetHintEl.classList.toggle("opacity-0", !active);
-  minecraftTargetHintEl.classList.toggle("opacity-100", active);
-  minecraftTargetHintEl.classList.toggle("border-emerald-500/15", active);
-  minecraftTargetHintEl.classList.toggle("bg-emerald-500/5", active);
+  minecraftTargetHintEl.classList.toggle("active", active);
 }
 
 function getSelectedServer() {
@@ -107,6 +121,9 @@ function renderSelectedServer() {
   const selected = getSelectedServer();
   selectedServerEl.textContent = selected ? selected.roomName : "No selection";
   selectedEndpointEl.textContent = selected?.peerAddr ?? "n/a";
+  selectedMetaEl.textContent = selected
+    ? `Host: ${selected.hostName}${selected.clientId === localClientId ? " (you)" : ""} · LAN ${selected.localPort} · ${selected.slots}${selected.hasPassword ? " · пароль" : ""}`
+    : "Выберите сервер из списка ниже.";
   syncButtons();
 }
 
@@ -118,8 +135,11 @@ function syncButtons() {
   const isHostMode = mode === "host";
   const selected = getSelectedServer();
 
+  openHostModalEl.disabled = isHostMode || busy;
   hostButtonEl.disabled = isHostMode || busy;
+  hostButtonEl.textContent = busy && !isHostMode ? "Запуск..." : "Хостить";
   stopButtonEl.disabled = mode === "idle";
+  refreshLobbyEl.disabled = state.realtime?.connection.state === "connecting";
   connectSelectedEl.disabled =
     !selected ||
     selected.clientId === localClientId ||
@@ -127,15 +147,14 @@ function syncButtons() {
     isHostMode ||
     state.pendingConnects.has(selected.clientId);
   connectSelectedEl.textContent =
-    selected && state.pendingConnects.has(selected.clientId) ? "Connecting..." : "Connect Selected";
+    selected && state.pendingConnects.has(selected.clientId) ? "Connecting..." : "Connect";
   copySelectedEndpointEl.disabled = !selected?.peerAddr;
 }
 
 function renderServers() {
   lobbyCountEl.textContent = `${state.servers.length} servers`;
   if (!state.servers.length) {
-    serverListEl.innerHTML =
-      '<div class="log-entry text-white/35">В lobby пока нет активных хостов.</div>';
+    serverListEl.innerHTML = '<div class="empty-state">В lobby пока нет активных хостов.</div>';
     renderSelectedServer();
     return;
   }
@@ -145,30 +164,28 @@ function renderServers() {
       const isSelected = state.selectedServerId === server.clientId;
       const isLocal = server.clientId === localClientId;
       const isConnecting = state.pendingConnects.has(server.clientId);
+      const icon = server.hasPassword ? "🔒" : "⚔";
+
       return `
-        <article class="server-card ${isSelected ? "server-card-active" : ""}">
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <p class="text-base font-semibold text-white">${escapeHtml(server.roomName)}</p>
-              <p class="mt-1 text-xs text-white/45">
-                Host: ${escapeHtml(server.hostName)}${isLocal ? " (you)" : ""}
-              </p>
-              <p class="mt-1 break-all text-[11px] text-white/35">${escapeHtml(server.peerAddr ?? "n/a")}</p>
-              <p class="mt-1 text-[11px] text-white/35">LAN port: ${escapeHtml(server.localPort ?? 25565)}</p>
+        <article class="server-row ${isSelected ? "active" : ""}">
+          <div class="server-main">
+            <div class="server-main-top">
+              <span class="server-name">${escapeHtml(server.roomName)}</span>
+              <span class="badge-lock">${icon}</span>
             </div>
-            <div class="text-right">
-              <p class="text-xs uppercase tracking-[0.18em] text-white/45">${escapeHtml(server.slots)}</p>
-              <p class="mt-2 text-xl">${server.hasPassword ? "🔒" : "⚔"}</p>
-            </div>
+            <div class="server-sub">Host: ${escapeHtml(server.hostName)}${isLocal ? " (you)" : ""}</div>
+            <div class="server-sub">${escapeHtml(server.peerAddr ?? "n/a")}</div>
+            <div class="server-sub">LAN ${escapeHtml(server.localPort)} · ${escapeHtml(server.slots)}</div>
           </div>
-          <div class="mt-4 flex gap-3">
-            <button class="ghost-button flex-1" data-select-server="${escapeHtml(server.clientId)}">Select</button>
+          <div class="server-players">${escapeHtml(server.slots)}</div>
+          <div class="server-actions">
+            <button class="ghost-button server-mini" data-select-server="${escapeHtml(server.clientId)}">Select</button>
             <button
-              class="${isLocal ? "ghost-button" : "primary-button"} flex-1"
+              class="${isLocal ? "ghost-button" : "primary-button"} server-mini"
               data-connect-server="${escapeHtml(server.clientId)}"
               ${isLocal || isConnecting ? "disabled" : ""}
             >
-              ${isLocal ? "Hosting" : isConnecting ? "Connecting..." : "Connect"}
+              ${isLocal ? "Hosting" : isConnecting ? "Connecting..." : "Join"}
             </button>
           </div>
         </article>
@@ -182,7 +199,7 @@ function renderServers() {
 function renderPeers(peers) {
   peerCountEl.textContent = `${peers?.length ?? 0} peers`;
   if (!peers?.length) {
-    peerListEl.innerHTML = '<div class="log-entry text-white/35">Нет активных peer-соединений.</div>';
+    peerListEl.innerHTML = '<div class="empty-state">Пока никого нет.</div>';
     return;
   }
 
@@ -190,16 +207,14 @@ function renderPeers(peers) {
     .map((peer) => {
       const ping = peer.pingMs == null ? "n/a" : `${peer.pingMs} ms`;
       return `
-        <div class="peer-card">
-          <div>
-            <p class="text-sm font-semibold text-white">${escapeHtml(peer.peerId)}</p>
-            <p class="mt-1 break-all text-xs text-white/45">${escapeHtml(peer.addr)}</p>
+        <div class="peer-row">
+          <div class="peer-head">
+            <span class="peer-name">${escapeHtml(peer.peerId)}</span>
+            <span class="peer-sub">${escapeHtml(peer.addr)}</span>
           </div>
-          <div class="text-right">
-            <p class="text-xs uppercase tracking-[0.18em] ${peer.connected ? "text-red-300" : "text-white/35"}">
-              ${peer.connected ? "online" : "pending"}
-            </p>
-            <p class="mt-1 text-xs text-white/60">${ping}</p>
+          <div class="peer-side">
+            <span class="peer-sub">${peer.connected ? "online" : "pending"}</span>
+            <span class="peer-sub">${ping}</span>
           </div>
         </div>
       `;
@@ -207,13 +222,48 @@ function renderPeers(peers) {
     .join("");
 }
 
+function renderActiveHost() {
+  if (!hostSession.active) {
+    activeHostCardEl.className = "active-host-card empty";
+    activeHostCardEl.innerHTML = `
+      <div class="host-card-body">
+        <div class="host-thumb">◼</div>
+        <div class="host-meta">
+          <h2>Хост не запущен</h2>
+          <p>Откройте модалку и создайте комнату, чтобы опубликовать сервер в лобби.</p>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  const status = state.status ?? {};
+  activeHostCardEl.className = "active-host-card";
+  activeHostCardEl.innerHTML = `
+    <div class="host-card-body">
+      <div class="host-thumb">MC</div>
+      <div class="host-meta">
+        <h2>${escapeHtml(hostSession.roomName)}</h2>
+        <p>${escapeHtml(status.note ?? "Хост активен")}.</p>
+        <div class="host-tags">
+          <span class="host-tag">Endpoint: ${escapeHtml(hostSession.peerAddr ?? "n/a")}</span>
+          <span class="host-tag">LAN: 127.0.0.1:${escapeHtml(hostSession.localPort)}</span>
+          <span class="host-tag">${hostSession.hasPassword ? "Пароль включён" : "Без пароля"}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderStatus(status) {
   state.status = status;
   connectionStateEl.textContent = formatState(status.state);
+  connectionStateEl.dataset.state = status.state ?? "idle";
   ablyStateEl.textContent = state.realtime?.connection.state ?? "offline";
   publicEndpointEl.textContent = status.publicUdpAddr ?? status.udpBindAddr ?? "n/a";
   statusNoteEl.textContent = status.note ?? "Idle";
   renderPeers(status.peers ?? []);
+  renderActiveHost();
   renderLogs();
   syncButtons();
 }
@@ -465,6 +515,8 @@ async function startHosting() {
 
     await syncPresence(status, { force: true, enter: true });
     await refreshLobby();
+    renderActiveHost();
+    closeModal();
   } catch (error) {
     addLog(`Host start failed: ${String(error)}`);
   } finally {
@@ -474,7 +526,7 @@ async function startHosting() {
 
 async function stopHosting() {
   stopButtonEl.disabled = true;
-  hostButtonEl.disabled = true;
+  openHostModalEl.disabled = true;
   state.pendingConnects.clear();
   state.tunnelReady = false;
   setMinecraftHint("Ожидание туннеля...", false);
@@ -512,6 +564,7 @@ async function stopHosting() {
       });
     }
 
+    renderActiveHost();
     await refreshLobby();
     addLog("Host session stopped.");
     syncButtons();
@@ -601,7 +654,7 @@ function escapeHtml(value) {
 await listen("tunnel_established", async (event) => {
   state.pendingConnects.clear();
   state.tunnelReady = true;
-  setMinecraftHint("Подключайтесь в Minecraft к localhost:25565", true);
+  setMinecraftHint("ПОДКЛЮЧАЙТЕСЬ В MINECRAFT К LOCALHOST:25565", true);
   addLog(`Tunnel established: ${event.payload?.minecraftAddr ?? "localhost:25565"}`);
   renderServers();
 });
@@ -612,6 +665,15 @@ await listen("tunnel_failed", async (event) => {
   setMinecraftHint("Failed to punch through NAT.", false);
   addLog(event.payload?.reason ?? "Failed to punch through NAT.");
   renderServers();
+});
+
+openHostModalEl.addEventListener("click", openModal);
+closeModalEl.addEventListener("click", closeModal);
+closeModalSecondaryEl.addEventListener("click", closeModal);
+modalEl.addEventListener("click", (event) => {
+  if (event.target instanceof HTMLElement && event.target.dataset.closeModal === "true") {
+    closeModal();
+  }
 });
 
 hostButtonEl.addEventListener("click", startHosting);
@@ -646,7 +708,12 @@ connectSelectedEl.addEventListener("click", async () => {
 });
 
 serverListEl.addEventListener("click", async (event) => {
-  const selectId = event.target.closest("[data-select-server]")?.dataset.selectServer;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  const selectId = target.closest("[data-select-server]")?.dataset.selectServer;
   if (selectId) {
     state.selectedServerId = selectId;
     renderSelectedServer();
@@ -654,7 +721,7 @@ serverListEl.addEventListener("click", async (event) => {
     return;
   }
 
-  const connectId = event.target.closest("[data-connect-server]")?.dataset.connectServer;
+  const connectId = target.closest("[data-connect-server]")?.dataset.connectServer;
   if (!connectId) {
     return;
   }
@@ -665,9 +732,19 @@ serverListEl.addEventListener("click", async (event) => {
   }
 });
 
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeModal();
+  }
+});
+
 setInterval(() => {
   void pollStatus();
 }, POLL_INTERVAL_MS);
 
+renderLogs();
+renderActiveHost();
+renderSelectedServer();
+syncButtons();
 await setupAbly();
 await pollStatus();
