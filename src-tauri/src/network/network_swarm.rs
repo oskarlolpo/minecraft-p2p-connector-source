@@ -5,6 +5,7 @@ use futures::StreamExt;
 use libp2p::{
     autonat,
     core::{multiaddr::Protocol, ConnectedPoint, Multiaddr},
+    dns,
     dcutr, identify, noise, relay,
     swarm::{
         dial_opts::{DialOpts, PeerCondition},
@@ -373,6 +374,10 @@ async fn spawn_swarm_runtime(
                 relay_addr_strings.len()
             ),
         );
+        push_log(
+            &mut status_guard,
+            "DNS resolver переключен на Google Public DNS (8.8.8.8 / 8.8.4.4), чтобы не зависеть от DNS провайдера.",
+        );
     }
 
     let mut swarm = build_swarm().await?;
@@ -473,6 +478,10 @@ async fn spawn_swarm_runtime(
 }
 
 async fn build_swarm() -> Result<Swarm<ConnectorBehaviour>> {
+    let mut dns_opts = dns::ResolverOpts::default();
+    dns_opts.attempts = 2;
+    dns_opts.timeout = Duration::from_secs(4);
+
     let swarm = SwarmBuilder::with_new_identity()
         .with_tokio()
         .with_tcp(
@@ -480,7 +489,7 @@ async fn build_swarm() -> Result<Swarm<ConnectorBehaviour>> {
             (tls::Config::new, noise::Config::new),
             yamux::Config::default,
         )?
-        .with_dns()?
+        .with_dns_config(dns::ResolverConfig::google(), dns_opts)
         .with_websocket(
             (libp2p::tls::Config::new, libp2p::noise::Config::new),
             libp2p::yamux::Config::default,
@@ -844,17 +853,32 @@ async fn handle_swarm_event(
         }
         SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
             let mut status_guard = status.write().await;
-            status_guard.state = ConnectionState::Error;
-            status_guard.last_error = Some(error.to_string());
-            push_log(
-                &mut status_guard,
-                format!(
-                    "Dial error{}: {error}",
-                    peer_id
-                        .map(|peer| format!(" для {peer}"))
-                        .unwrap_or_default()
-                ),
-            );
+            let is_relay_bootstrap_error = peer_id
+                .map(|peer| relay_peer_ids.contains(&peer))
+                .unwrap_or(false);
+
+            if is_relay_bootstrap_error {
+                push_log(
+                    &mut status_guard,
+                    format!("Dial error для relay bootstrap {}: {error}", peer_id.unwrap()),
+                );
+                if config.mode == SessionMode::Host && status_guard.state == ConnectionState::Error {
+                    status_guard.state = ConnectionState::WaitingForPeer;
+                    status_guard.last_error = None;
+                }
+            } else {
+                status_guard.state = ConnectionState::Error;
+                status_guard.last_error = Some(error.to_string());
+                push_log(
+                    &mut status_guard,
+                    format!(
+                        "Dial error{}: {error}",
+                        peer_id
+                            .map(|peer| format!(" для {peer}"))
+                            .unwrap_or_default()
+                    ),
+                );
+            }
         }
         SwarmEvent::IncomingConnectionError { error, .. } => {
             log_status(status, format!("Incoming connection error: {error}")).await;

@@ -61,6 +61,7 @@ const hostSession = {
   localPort: 25565,
   minecraftVersion: null,
   presencePayload: null,
+  presenceEntered: false,
 };
 
 const localClientId = ensureClientId();
@@ -250,13 +251,44 @@ function getSelectedServer() {
   return state.servers.find((server) => server.clientId === state.selectedServerId) ?? null;
 }
 
+function isLikelyPublicEndpoint(value) {
+  if (!value) return false;
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized.includes("/p2p-circuit")) return true;
+  if (normalized.includes("bore.pub")) return true;
+  if (normalized.includes("/dns4/") || normalized.includes("/dns6/")) return true;
+  if (normalized.includes("/ip4/127.") || normalized.includes("/ip4/10.") || normalized.includes("/ip4/192.168.")) {
+    return false;
+  }
+  if (normalized.includes("/ip4/172.")) {
+    return !/\/ip4\/172\.(1[6-9]|2\d|3[0-1])\./.test(normalized);
+  }
+  if (normalized.includes("localhost") || normalized.includes("127.0.0.1")) return false;
+  if (/^10\./.test(normalized) || /^192\.168\./.test(normalized)) return false;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)) return false;
+  return true;
+}
+
+function sortAdvertisedAddrs(addrs) {
+  return [...addrs].sort((left, right) => Number(isLikelyPublicEndpoint(right)) - Number(isLikelyPublicEndpoint(left)));
+}
+
 function collectAdvertisedAddrs(bootstrap, status) {
   const values = [
     ...(bootstrap?.listenAddrs ?? []),
     status?.publicUdpAddr ?? null,
     status?.udpBindAddr ?? null,
   ].filter(Boolean);
-  return [...new Set(values)];
+  return sortAdvertisedAddrs([...new Set(values)]);
+}
+
+function advertisedEndpoint(addrs, explicitEndpoint = null) {
+  return explicitEndpoint ?? addrs.find((addr) => isLikelyPublicEndpoint(addr)) ?? addrs[0] ?? null;
+}
+
+function canAdvertiseHost() {
+  return Boolean(hostSession.active && hostSession.peerId && advertisedEndpoint(hostSession.listenAddrs, hostSession.peerAddr));
 }
 
 function renderSelectedServer() {
@@ -454,7 +486,10 @@ function hydrateServers(members) {
   state.servers = members
     .map((member) => {
       const data = member.data ?? {};
-      const peerAddrs = Array.isArray(data.listen_addrs) ? data.listen_addrs.filter(Boolean) : [];
+      const peerAddrs = sortAdvertisedAddrs(
+        Array.isArray(data.listen_addrs) ? data.listen_addrs.filter(Boolean) : [],
+      );
+      const endpoint = data.endpoint ?? advertisedEndpoint(peerAddrs);
       return {
         clientId: member.clientId,
         roomName: data.room_name ?? "Unnamed room",
@@ -463,12 +498,13 @@ function hydrateServers(members) {
         hasPassword: Boolean(data.has_password),
         peerId: data.peer_id ?? null,
         peerAddrs,
-        peerAddr: peerAddrs[0] ?? null,
+        peerAddr: endpoint ?? null,
         localPort: data.local_port ?? 25565,
         minecraftVersion: data.minecraft_version ?? null,
+        transport: data.transport ?? null,
       };
     })
-    .filter((server) => Boolean(server.peerId) && server.peerAddrs.length > 0);
+    .filter((server) => Boolean(server.peerId) && (server.peerAddrs.length > 0 || Boolean(server.peerAddr)));
 
   if (state.selectedServerId && !state.servers.find((server) => server.clientId === state.selectedServerId)) {
     state.selectedServerId = null;
@@ -480,6 +516,7 @@ function hydrateServers(members) {
 }
 
 function buildPresencePayload(status) {
+  const endpoint = advertisedEndpoint(hostSession.listenAddrs, hostSession.peerAddr);
   return {
     room_name: hostSession.roomName,
     host_name: localClientId,
@@ -487,8 +524,10 @@ function buildPresencePayload(status) {
     has_password: hostSession.hasPassword,
     peer_id: hostSession.peerId,
     listen_addrs: hostSession.listenAddrs,
+    endpoint,
     local_port: hostSession.localPort,
     minecraft_version: hostSession.minecraftVersion ?? status?.minecraftVersion ?? null,
+    transport: status?.transportPath ?? state.activeTunnelTransport ?? null,
   };
 }
 
@@ -497,7 +536,8 @@ function syncHostSessionFromStatus(status) {
     hostSession.active = true;
     hostSession.roomName = status.roomCode ?? hostSession.roomName;
     hostSession.hasPassword = Boolean(status.passwordProtected);
-    hostSession.peerAddr = hostSession.listenAddrs[0] ?? status.publicUdpAddr ?? status.udpBindAddr ?? hostSession.peerAddr;
+    hostSession.peerAddr =
+      advertisedEndpoint(hostSession.listenAddrs, status.publicUdpAddr ?? status.udpBindAddr) ?? hostSession.peerAddr;
     hostSession.localPort = status.localGamePort ?? hostSession.localPort;
     hostSession.minecraftVersion = status.minecraftVersion ?? hostSession.minecraftVersion;
     return;
@@ -507,6 +547,7 @@ function syncHostSessionFromStatus(status) {
   hostSession.listenAddrs = [];
   hostSession.peerAddr = null;
   hostSession.minecraftVersion = null;
+  hostSession.presenceEntered = false;
 }
 
 function updateHintFromStatus(status) {
@@ -619,10 +660,8 @@ async function refreshLobby() {
 async function syncPresence(status, { force = false, enter = false } = {}) {
   await ensureChannels();
   if (
-    !hostSession.active ||
+    !canAdvertiseHost() ||
     !state.lobbyChannel ||
-    !hostSession.peerId ||
-    !hostSession.listenAddrs.length ||
     state.syncingPresence ||
     state.realtime?.connection.state !== "connected"
   ) {
@@ -638,11 +677,14 @@ async function syncPresence(status, { force = false, enter = false } = {}) {
     if (!safeShouldSkip(state.lobbyChannel) && state.lobbyChannel.state !== "attached") {
       await state.lobbyChannel.attach();
     }
-    if (enter || !hostSession.presencePayload) {
+    const shouldEnter = enter || !hostSession.presenceEntered;
+    if (shouldEnter) {
       await state.lobbyChannel.presence.enter(payload);
       addLog(t("hostStartedPresence", { room: hostSession.roomName, addr: hostSession.peerAddr }));
+      hostSession.presenceEntered = true;
     } else {
       await state.lobbyChannel.presence.update(payload);
+      addLog(`Presence updated for ${hostSession.roomName} (${payload.endpoint ?? "n/a"}).`);
     }
     hostSession.presencePayload = serialized;
   } catch (error) {
@@ -659,7 +701,7 @@ async function setupAbly() {
     addLog(`Ably connection: ${change.previous ?? "none"} -> ${change.current}`);
     if (change.current === "connected") {
       await bindChannelHandlers();
-      await syncPresence(state.status, { force: true, enter: !hostSession.presencePayload });
+      await syncPresence(state.status, { force: true, enter: !hostSession.presenceEntered });
       await refreshLobby();
     }
   });
@@ -696,8 +738,8 @@ async function startHosting() {
   try {
     const bootstrap = await invoke("start_hosting", { roomName, password, localPort });
     const status = await waitForStatus(
-      (snapshot) => snapshot.mode === "host" && ["waitingForPeer", "hosting", "connected"].includes(snapshot.state),
-      8000,
+      (snapshot) => snapshot.mode === "host" && ["waitingForPeer", "hosting", "connected", "error"].includes(snapshot.state),
+      12000,
     );
     renderStatus(status);
     hostSession.active = true;
@@ -705,11 +747,16 @@ async function startHosting() {
     hostSession.hasPassword = Boolean(password);
     hostSession.peerId = bootstrap.peerId ?? null;
     hostSession.listenAddrs = collectAdvertisedAddrs(bootstrap, status);
-    hostSession.peerAddr = hostSession.listenAddrs[0] ?? "n/a";
+    hostSession.peerAddr = advertisedEndpoint(hostSession.listenAddrs, status.publicUdpAddr ?? status.udpBindAddr);
     hostSession.localPort = localPort;
     hostSession.minecraftVersion = status.minecraftVersion ?? null;
     hostSession.presencePayload = null;
-    await syncPresence(status, { force: true, enter: true });
+    hostSession.presenceEntered = false;
+    if (canAdvertiseHost()) {
+      await syncPresence(status, { force: true, enter: true });
+    } else {
+      addLog("Presence отложен: ждём публичный endpoint от relay или reverse tunnel.");
+    }
     await refreshLobby();
     closeModal();
   } catch (error) {
@@ -742,6 +789,7 @@ async function stopSession() {
     hostSession.localPort = 25565;
     hostSession.minecraftVersion = null;
     hostSession.presencePayload = null;
+    hostSession.presenceEntered = false;
     state.selectedServerId = null;
     const status = await invoke("get_status");
     renderStatus(status);
@@ -860,7 +908,24 @@ await listen("peer_connected", async (event) => {
   );
   const status = await invoke("get_status");
   renderStatus(status);
+  await syncPresence(status, { force: true });
   renderServers();
+});
+
+await listen("reverse_tunnel_ready", async (event) => {
+  const endpoint = event.payload?.endpoint ?? null;
+  const multiaddr = event.payload?.multiaddr ?? null;
+  if (multiaddr) {
+    hostSession.listenAddrs = sortAdvertisedAddrs([...new Set([multiaddr, ...hostSession.listenAddrs])]);
+  }
+  if (endpoint) {
+    hostSession.peerAddr = endpoint;
+  }
+  addLog(`Reverse tunnel ready: ${endpoint ?? multiaddr ?? "n/a"}`);
+  const status = await invoke("get_status");
+  renderStatus(status);
+  await syncPresence(status, { force: true, enter: !hostSession.presenceEntered });
+  await refreshLobby();
 });
 
 await listen("relay_active", async (event) => {
