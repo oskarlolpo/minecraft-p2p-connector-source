@@ -28,7 +28,8 @@ const DEFAULT_TOPIC_PREFIX: &str = "minecraft-p2p-relay";
 const MQTT_REQUEST_CAPACITY: usize = 256;
 const TCP_WRITE_QUEUE_CAPACITY: usize = 64;
 const TCP_CHUNK_SIZE: usize = 16 * 1024;
-const RELAY_READY_TIMEOUT_MS: u64 = 3_500;
+const RELAY_READY_TIMEOUT_MS: u64 = 8_000;
+const RELAY_RECONNECT_DELAY_MS: u64 = 1_250;
 
 const FRAME_OPEN: u8 = 1;
 const FRAME_DATA: u8 = 2;
@@ -112,35 +113,48 @@ pub async fn start_host_runtime(
     cancel: CancellationToken,
 ) -> Result<RelayRuntime> {
     let topics = RelayTopics::new(&config.topic_prefix, &session_id);
-    let client_id = format!("mcp2p-host-{}", Uuid::new_v4().simple());
-    let (client, mut eventloop) = build_client(&config, client_id);
-    client
-        .subscribe(topics.client_to_host.clone(), QoS::AtMostOnce)
-        .await
-        .context("failed to subscribe host relay topic")?;
-
     let streams = Arc::new(Mutex::new(HashMap::<u64, mpsc::Sender<Vec<u8>>>::new()));
     let join_handle = tokio::spawn(async move {
         loop {
-            tokio::select! {
-                _ = cancel.cancelled() => break,
-                event = eventloop.poll() => {
-                    match event.context("host relay MQTT poll failed")? {
-                        Event::Incoming(Incoming::Publish(publish)) => {
-                            handle_host_publish(
-                                publish.payload.as_ref(),
-                                &client,
-                                &topics,
-                                streams.clone(),
-                                local_game_port,
-                                cancel.clone(),
-                            )
-                            .await?;
-                        }
-                        Event::Outgoing(Outgoing::PingReq) => {}
-                        _ => {}
+            let client_id = format!("mcp2p-host-{}", Uuid::new_v4().simple());
+            let (client, mut eventloop) = build_client(&config, client_id);
+            client
+                .subscribe(topics.client_to_host.clone(), QoS::AtLeastOnce)
+                .await
+                .context("failed to subscribe host relay topic")?;
+
+            let poll_result: Result<()> = loop {
+                let event = tokio::select! {
+                    _ = cancel.cancelled() => return Ok(()),
+                    event = eventloop.poll() => event,
+                };
+
+                match event {
+                    Ok(Event::Incoming(Incoming::Publish(publish))) => {
+                        handle_host_publish(
+                            publish.payload.as_ref(),
+                            &client,
+                            &topics,
+                            streams.clone(),
+                            local_game_port,
+                            cancel.clone(),
+                        )
+                        .await?;
                     }
+                    Ok(Event::Outgoing(Outgoing::PingReq)) => {}
+                    Ok(_) => {}
+                    Err(error) => break Err(error).context("host relay MQTT poll failed"),
                 }
+            };
+
+            if cancel.is_cancelled() {
+                break;
+            }
+
+            if let Err(error) = poll_result {
+                tracing::warn!("host relay reconnect after error: {error:#}");
+                tokio::time::sleep(Duration::from_millis(RELAY_RECONNECT_DELAY_MS)).await;
+                continue;
             }
         }
 
@@ -156,13 +170,6 @@ pub async fn start_client_runtime(
     cancel: CancellationToken,
 ) -> Result<RelayRuntime> {
     let topics = RelayTopics::new(&config.topic_prefix, &session_id);
-    let client_id = format!("mcp2p-client-{}", Uuid::new_v4().simple());
-    let (client, mut eventloop) = build_client(&config, client_id);
-    client
-        .subscribe(topics.host_to_client.clone(), QoS::AtMostOnce)
-        .await
-        .context("failed to subscribe client relay topic")?;
-
     let listener = TcpListener::bind(proxy::MINECRAFT_LOCAL_ADDR)
         .await
         .with_context(|| {
@@ -176,12 +183,13 @@ pub async fn start_client_runtime(
     let (ready_tx, ready_rx) = oneshot::channel::<()>();
     let ready = Arc::new(Mutex::new(Some(ready_tx)));
 
-    let accept_client = client.clone();
     let accept_topics = topics.clone();
     let accept_cancel = cancel.clone();
     let accept_streams = streams.clone();
     let stream_ids = Arc::new(AtomicU64::new(1));
     let accept_stream_ids = stream_ids.clone();
+    let current_client = Arc::new(Mutex::new(None::<AsyncClient>));
+    let accept_current_client = current_client.clone();
 
     let accept_task = tokio::spawn(async move {
         loop {
@@ -192,11 +200,16 @@ pub async fn start_client_runtime(
 
             let (tcp_stream, _) = incoming.context("relay listener accept failed")?;
             let stream_id = accept_stream_ids.fetch_add(1, Ordering::Relaxed);
+            let client = accept_current_client
+                .lock()
+                .await
+                .clone()
+                .ok_or_else(|| anyhow!("relay MQTT client is not ready yet"))?;
             start_client_stream(
                 tcp_stream,
                 stream_id,
                 accept_streams.clone(),
-                accept_client.clone(),
+                client,
                 accept_topics.clone(),
                 accept_cancel.clone(),
             )
@@ -209,33 +222,61 @@ pub async fn start_client_runtime(
     let event_ready = ready.clone();
     let event_streams = streams.clone();
     let event_cancel = cancel.clone();
+    let event_config = config.clone();
+    let event_topics = topics.clone();
+    let event_current_client = current_client.clone();
     let event_task = tokio::spawn(async move {
         loop {
-            tokio::select! {
-                _ = event_cancel.cancelled() => break,
-                event = eventloop.poll() => {
-                    match event.context("client relay MQTT poll failed")? {
-                        Event::Incoming(Incoming::Publish(publish)) => {
-                            handle_client_publish(
-                                publish.payload.as_ref(),
-                                event_streams.clone(),
-                                event_ready.clone(),
-                            )
-                            .await?;
-                        }
-                        Event::Outgoing(Outgoing::PingReq) => {}
-                        _ => {}
+            let client_id = format!("mcp2p-client-{}", Uuid::new_v4().simple());
+            let (client, mut eventloop) = build_client(&event_config, client_id);
+            *event_current_client.lock().await = Some(client.clone());
+            client
+                .subscribe(event_topics.host_to_client.clone(), QoS::AtLeastOnce)
+                .await
+                .context("failed to subscribe client relay topic")?;
+
+            let should_send_hello = event_ready.lock().await.is_some();
+            if should_send_hello {
+                publish_frame(&client, &event_topics.client_to_host, FRAME_HELLO, 0, &[])
+                    .await
+                    .context("failed to publish relay hello")?;
+            }
+
+            let poll_result: Result<()> = loop {
+                let event = tokio::select! {
+                    _ = event_cancel.cancelled() => return Ok(()),
+                    event = eventloop.poll() => event,
+                };
+
+                match event {
+                    Ok(Event::Incoming(Incoming::Publish(publish))) => {
+                        handle_client_publish(
+                            publish.payload.as_ref(),
+                            event_streams.clone(),
+                            event_ready.clone(),
+                        )
+                        .await?;
                     }
+                    Ok(Event::Outgoing(Outgoing::PingReq)) => {}
+                    Ok(_) => {}
+                    Err(error) => break Err(error).context("client relay MQTT poll failed"),
                 }
+            };
+
+            if event_cancel.is_cancelled() {
+                break;
+            }
+
+            if let Err(error) = poll_result {
+                tracing::warn!("client relay reconnect after error: {error:#}");
+                tokio::time::sleep(Duration::from_millis(RELAY_RECONNECT_DELAY_MS)).await;
+                continue;
             }
         }
 
         Ok(())
     });
 
-    publish_frame(&client, &topics.client_to_host, FRAME_HELLO, 0, &[])
-        .await
-        .context("failed to publish relay hello")?;
     timeout(Duration::from_millis(RELAY_READY_TIMEOUT_MS), ready_rx)
         .await
         .context("relay ready timed out")?
@@ -477,7 +518,7 @@ async fn publish_frame(
     payload: &[u8],
 ) -> Result<()> {
     client
-        .publish(topic, QoS::AtMostOnce, false, encode_frame(kind, stream_id, payload))
+        .publish(topic, QoS::AtLeastOnce, false, encode_frame(kind, stream_id, payload))
         .await
         .with_context(|| format!("failed to publish relay frame to {topic}"))
 }
