@@ -1,13 +1,13 @@
 use std::{
     collections::HashMap,
     env,
-    ffi::CStr,
     fs::{self, File},
-    os::raw::c_char,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
 };
+#[cfg(embedded_ygg)]
+use std::{ffi::CStr, os::raw::c_char};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
