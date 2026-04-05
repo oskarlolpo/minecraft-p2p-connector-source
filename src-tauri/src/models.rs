@@ -71,24 +71,38 @@ pub struct SwarmBootstrap {
 pub struct NetworkStatus {
     pub mode: SessionMode,
     pub state: ConnectionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub room_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub udp_bind_addr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub public_udp_addr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub local_game_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub minecraft_version: Option<String>,
     pub transport_kind: TransportKind,
     pub local_target_state: LocalTargetState,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub transport_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub transport_preference: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cloudflare_enabled: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cloudflare_turn_ready: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cloudflare_turn_endpoint: Option<String>,
     pub password_protected: bool,
     pub peer_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub peers: Vec<PeerInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     pub signaling_server: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub logs: Vec<String>,
 }
 
@@ -144,12 +158,19 @@ pub struct DiagnosticSnapshot {
     pub exported_at: String,
     pub role: SessionMode,
     pub status: NetworkStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub preflight: Option<PreflightReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub test_server: Option<TestServerInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub network_checks: Option<NetworkChecks>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub direct_attempt: Option<TransportAttempt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cloudflare_attempt: Option<CloudflareAttempt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub yggstack_runtime: Option<YggstackRuntimeInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_transport: Option<String>,
 }
 
@@ -166,6 +187,7 @@ pub struct NetworkChecks {
     pub ably_tcp: CheckResult,
     pub system_dns: CheckResult,
     pub fallback_dns: CheckResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cloudflare_https: Option<CheckResult>,
     pub turn_udp: CheckResult,
 }
@@ -204,13 +226,21 @@ pub struct CloudflareRuntimeInfo {
 pub struct YggstackRuntimeInfo {
     pub ready: bool,
     pub running: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub binary_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub config_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub log_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ygg_public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ygg_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ygg_subnet: Option<String>,
     pub note: String,
 }

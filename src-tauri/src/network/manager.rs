@@ -105,7 +105,9 @@ impl NetworkManager {
             signaling_server: ABLY_SIGNAL_LABEL.into(),
             ..Default::default()
         };
-        initial_status.logs.push("Minecraft P2P Connector Р·Р°РїСѓС‰РµРЅ.".into());
+        initial_status
+            .logs
+            .push("Minecraft P2P Connector запущен.".into());
         *status.blocking_write() = initial_status;
 
         Self {
@@ -174,10 +176,10 @@ impl NetworkManager {
     ) -> Result<String> {
         let room_name = room_name.trim().to_string();
         if room_name.is_empty() {
-            return Err(anyhow!("РёРјСЏ РєРѕРјРЅР°С‚С‹ РЅРµ РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј"));
+            return Err(anyhow!("имя комнаты не должно быть пустым"));
         }
         if local_port == 0 {
-            return Err(anyhow!("РїРѕСЂС‚ Р»РѕРєР°Р»СЊРЅРѕР№ РёРіСЂС‹ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ Р±РѕР»СЊС€Рµ 0"));
+            return Err(anyhow!("порт локальной игры должен быть больше 0"));
         }
 
         let _guard = self.inner.control.lock().await;
@@ -198,7 +200,7 @@ impl NetworkManager {
     pub async fn stop_hosting(&self) -> Result<()> {
         let _guard = self.inner.control.lock().await;
         self.reset_session().await;
-        self.push_log("РЎРµСЃСЃРёСЏ РѕСЃС‚Р°РЅРѕРІР»РµРЅР°.".into()).await;
+        self.push_log("Сессия остановлена.".into()).await;
         Ok(())
     }
 
@@ -211,12 +213,12 @@ impl NetworkManager {
     ) -> Result<()> {
         let peer_addr = peer_addr.trim().to_string();
         if peer_addr.is_empty() {
-            return Err(anyhow!("Р°РґСЂРµСЃ peer РЅРµ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј"));
+            return Err(anyhow!("адрес peer не должен быть пустым"));
         }
 
         let peer_addr: SocketAddr = peer_addr
             .parse()
-            .with_context(|| format!("РЅРµРІРµСЂРЅС‹Р№ socket address: {peer_addr}"))?;
+            .with_context(|| format!("неверный socket address: {peer_addr}"))?;
 
         let _guard = self.inner.control.lock().await;
 
@@ -244,10 +246,10 @@ impl NetworkManager {
             let session = self.inner.session.lock().await;
             let runtime = session
                 .as_ref()
-                .ok_or_else(|| anyhow!("Р°РєС‚РёРІРЅРѕР№ СЃРµСЃСЃРёРё РЅРµС‚"))?;
+                .ok_or_else(|| anyhow!("активной сессии нет"))?;
 
             let SessionControl::Host(host) = &runtime.control else {
-                return Err(anyhow!("РІС‹РіРЅР°С‚СЊ РёРіСЂРѕРєР° РјРѕР¶РЅРѕ С‚РѕР»СЊРєРѕ РёР· СЂРµР¶РёРјР° С…РѕСЃС‚Р°"));
+                return Err(anyhow!("выгнать игрока можно только из режима хоста"));
             };
 
             host.live_connections.clone()
@@ -255,12 +257,12 @@ impl NetworkManager {
 
         let connection = live_connections.lock().await.remove(&peer_id);
         let Some(connection) = connection else {
-            return Err(anyhow!("РёРіСЂРѕРє {peer_id} РЅРµ РЅР°Р№РґРµРЅ СЃСЂРµРґРё Р°РєС‚РёРІРЅС‹С… РїРѕРґРєР»СЋС‡РµРЅРёР№"));
+            return Err(anyhow!("игрок {peer_id} не найден среди активных подключений"));
         };
 
         connection.close(VarInt::from_u32(1), b"kicked-by-host");
         self.mark_peer_disconnected(&peer_id).await;
-        self.push_log(format!("РРіСЂРѕРє {peer_id} РѕС‚РєР»СЋС‡С‘РЅ С…РѕСЃС‚РѕРј."))
+        self.push_log(format!("Игрок {peer_id} отключён хостом."))
             .await;
         Ok(())
     }
@@ -283,14 +285,11 @@ impl NetworkManager {
             state: ConnectionState::Starting,
             room_code: Some(room_name.clone()),
             local_game_port: Some(local_port),
-            transport_preference: Some(if use_cloudflare { "cloudflare" } else { "direct" }.into()),
-            cloudflare_enabled: use_cloudflare,
-            cloudflare_turn_ready: use_cloudflare && self.inner.cloudflare.runtime_available(),
-            cloudflare_turn_endpoint: self.inner.cloudflare.first_turn_endpoint(),
+            transport_preference: Some("direct".into()),
             password_protected: has_password,
             signaling_server: ABLY_SIGNAL_LABEL.into(),
-            note: Some("РџРѕРґРЅРёРјР°СЋ host endpoint Рё Р·Р°РїСЂР°С€РёРІР°СЋ Р»РѕРєР°Р»СЊРЅСѓСЋ РІРµСЂСЃРёСЋ Minecraft.".into()),
-            logs: vec![format!("Host СЃС‚Р°СЂС‚СѓРµС‚: {room_name}")],
+            note: Some("Поднимаю host endpoint и запрашиваю локальную версию Minecraft.".into()),
+            logs: vec![format!("Host стартует: {room_name}")],
             ..Default::default()
         })
         .await;
@@ -299,7 +298,7 @@ impl NetworkManager {
             Ok(version) => Some(version),
             Err(error) => {
                 self.push_log(format!(
-                    "РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РІРµСЂСЃРёСЋ Minecraft РЅР° 127.0.0.1:{local_port}: {error:#}"
+                    "Не удалось определить версию Minecraft на 127.0.0.1:{local_port}: {error:#}"
                 ))
                 .await;
                 None
@@ -315,7 +314,7 @@ impl NetworkManager {
             udp_socket,
             Arc::new(quinn::TokioRuntime),
         )
-        .context("РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ host QUIC endpoint")?;
+        .context("не удалось создать host QUIC endpoint")?;
 
         self.overwrite_status(NetworkStatus {
             mode: SessionMode::Host,
@@ -325,43 +324,24 @@ impl NetworkManager {
             public_udp_addr: Some(public_udp_addr.to_string()),
             local_game_port: Some(local_port),
             minecraft_version: minecraft_version.clone(),
-            transport_preference: Some(if use_cloudflare { "cloudflare" } else { "direct" }.into()),
-            cloudflare_enabled: use_cloudflare,
-            cloudflare_turn_ready: use_cloudflare && self.inner.cloudflare.runtime_available(),
-            cloudflare_turn_endpoint: self.inner.cloudflare.first_turn_endpoint(),
+            transport_preference: Some("direct".into()),
             password_protected: has_password,
             signaling_server: ABLY_SIGNAL_LABEL.into(),
             note: Some(format!(
-                "РҐРѕСЃС‚ Р°РєС‚РёРІРµРЅ. РљРѕРјРЅР°С‚Р°: {room_name}. Р›РѕРєР°Р»СЊРЅС‹Р№ РїРѕСЂС‚: {local_port}. Р’РµСЂСЃРёСЏ: {}.",
+                "Хост активен. Комната: {room_name}. Локальный порт: {local_port}. Версия: {}.",
                 minecraft_version
                     .clone()
-                    .unwrap_or_else(|| "РќРµРёР·РІРµСЃС‚РЅРѕ".into())
+                    .unwrap_or_else(|| "Неизвестно".into())
             )),
             logs: vec![
-                format!("РџСѓР±Р»РёС‡РЅС‹Р№ UDP Р°РґСЂРµСЃ: {public_udp_addr}"),
-                format!("Р›РѕРєР°Р»СЊРЅС‹Р№ bind: {udp_bind_addr}"),
+                format!("Публичный UDP адрес: {public_udp_addr}"),
+                format!("Локальный bind: {udp_bind_addr}"),
                 format!("Host forwards to {}", proxy::minecraft_local_addr(local_port)),
-                if use_cloudflare {
-                    if let Some(endpoint) = self.inner.cloudflare.first_turn_endpoint() {
-                        format!("TURN fallback requested. Endpoint: {endpoint}")
-                    } else {
-                        "TURN fallback requested, but endpoint is not configured.".into()
-                    }
-                } else {
-                    "?????????????? TURN fallback ??? ???? ??????? ????????.".into()
-                },
+                "После direct path будет доступен Yggstack fallback, затем MQTT relay.".into(),
             ],
             ..Default::default()
         })
         .await;
-
-        if use_cloudflare && !self.inner.cloudflare.runtime_available() {
-            self.push_log(
-                "TURN fallback ??? ????????, ?? credential endpoint ?? ????????. ???? ???????????? direct path ? ????????? relay."
-                    .into(),
-            )
-            .await;
-        }
 
         let cancel = CancellationToken::new();
         let accept_task = self.spawn_host_accept_loop(
@@ -426,11 +406,11 @@ impl NetworkManager {
         self.mutate_status(|status| {
             status.state = ConnectionState::Punching;
             status.note = Some(format!(
-                "РџСЂРѕР±РёРІР°СЋ UDP РґРѕ РєР»РёРµРЅС‚Р° {display_peer}. РРіСЂР° СЃР»СѓС€Р°РµС‚СЃСЏ РЅР° 127.0.0.1:{local_game_port}. {}",
+                "Пробиваю UDP до клиента {display_peer}. Игра слушается на 127.0.0.1:{local_game_port}. {}",
                 if use_cloudflare {
-                    "??? ???? ??????? ??????? ?????????????? TURN fallback."
+                    "Дополнительный fallback разрешён для этой комнаты."
                 } else {
-                    "РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ СЃС‚Р°РЅРґР°СЂС‚РЅС‹Р№ direct РїСЂРѕС„РёР»СЊ."
+                    "Используется стандартный direct профиль."
                 }
             ));
         })
@@ -544,7 +524,7 @@ impl NetworkManager {
             udp_socket,
             Arc::new(quinn::TokioRuntime),
         )
-        .context("РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ client QUIC endpoint")?;
+        .context("не удалось создать client QUIC endpoint")?;
         endpoint.set_default_client_config(build_insecure_client_config()?);
 
         self.overwrite_status(NetworkStatus {
@@ -554,7 +534,7 @@ impl NetworkManager {
             public_udp_addr: Some(public_udp_addr.to_string()),
             transport_preference: Some("direct".into()),
             signaling_server: ABLY_SIGNAL_LABEL.into(),
-            note: Some("РљР»РёРµРЅС‚ РіРѕС‚РѕРІ. РћС‚РїСЂР°РІР»СЏСЋ handshake Рё Р¶РґСѓ РѕС‚РІРµС‚ РѕС‚ С…РѕСЃС‚Р°.".into()),
+            note: Some("Клиент готов. Отправляю handshake и жду ответ от хоста.".into()),
             peers: vec![PeerInfo {
                 peer_id: peer_id.clone(),
                 addr: peer_addr.to_string(),
@@ -580,7 +560,7 @@ impl NetworkManager {
         });
 
         tokio::select! {
-            _ = cancel.cancelled() => return Err(anyhow!("РїРѕРґРєР»СЋС‡РµРЅРёРµ РѕС‚РјРµРЅРµРЅРѕ")),
+            _ = cancel.cancelled() => return Err(anyhow!("подключение отменено")),
             _ = tokio::time::sleep(Duration::from_millis(HOST_PUNCH_GRACE_MS)) => {}
         }
 
@@ -631,7 +611,7 @@ impl NetworkManager {
             .await
             .with_context(|| {
                 format!(
-                    "РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ Р»РѕРєР°Р»СЊРЅС‹Р№ РїСЂРѕРєСЃРё РЅР° {}. РџРѕСЂС‚ СѓР¶Рµ Р·Р°РЅСЏС‚",
+                    "не удалось открыть локальный прокси на {}. Порт уже занят",
                     proxy::MINECRAFT_LOCAL_ADDR
                 )
             })?;
@@ -641,7 +621,7 @@ impl NetworkManager {
             status.transport_kind = TransportKind::DirectQuic;
             status.transport_path = Some("direct-quic".into());
             status.note = Some(
-                "РЎРѕРµРґРёРЅРµРЅРёРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРѕ. РџРѕРґРєР»СЋС‡Р°Р№С‚РµСЃСЊ РІ Minecraft Рє localhost:25565.".into(),
+                "Соединение установлено. Подключайтесь в Minecraft к localhost:25565.".into(),
             );
             status.peers = vec![PeerInfo {
                 peer_id: peer_id.clone(),
@@ -651,7 +631,7 @@ impl NetworkManager {
             }];
         })
         .await;
-        self.push_log("Р›РѕРєР°Р»СЊРЅС‹Р№ proxy РЅР° 127.0.0.1:25565 РїРѕРґРЅСЏС‚.".into())
+        self.push_log("Локальный proxy на 127.0.0.1:25565 поднят.".into())
             .await;
         self.inner
             .diagnostics
@@ -925,7 +905,7 @@ impl NetworkManager {
         }
 
         let (send, recv) = opened_stream.ok_or_else(|| {
-            last_error.unwrap_or_else(|| anyhow!("РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ QUIC stream РґРѕ С…РѕСЃС‚Р°"))
+            last_error.unwrap_or_else(|| anyhow!("не удалось открыть QUIC stream до хоста"))
         })?;
 
         proxy::bridge_client_tcp_to_quic(tcp_stream, send, recv).await
@@ -945,7 +925,7 @@ impl NetworkManager {
             status.transport_path = Some("ably-relay".into());
             status.transport_preference.get_or_insert_with(|| "direct".into());
             status.note = Some(
-                "РџСЂСЏРјРѕР№ QUIC РЅРµ РїРѕРґРЅСЏР»СЃСЏ. РџРµСЂРµС…РѕР¶Сѓ РЅР° СЂРµР·РµСЂРІРЅС‹Р№ relay-РјР°СЂС€СЂСѓС‚ С‡РµСЂРµР· Ably MQTT."
+                "Прямой QUIC не поднялся. Перехожу на резервный relay-маршрут через Ably MQTT."
                     .into(),
             );
         })
@@ -964,7 +944,7 @@ impl NetworkManager {
             status.transport_kind = TransportKind::AblyRelay;
             status.transport_path = Some("ably-relay".into());
             status.note = Some(
-                "РЎРѕРµРґРёРЅРµРЅРёРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРѕ С‡РµСЂРµР· relay fallback. РџРѕРґРєР»СЋС‡Р°Р№С‚РµСЃСЊ РІ Minecraft Рє localhost:25565."
+                "Соединение установлено через relay fallback. Подключайтесь в Minecraft к localhost:25565."
                     .into(),
             );
             status.peers = vec![PeerInfo {
@@ -1089,14 +1069,14 @@ impl NetworkManager {
             self.mutate_status(|status| {
                 status.state = ConnectionState::Connecting;
                 status.note = Some(format!(
-                    "QUIC handshake, РїРѕРїС‹С‚РєР° {attempt}/{CLIENT_CONNECT_RETRY_ATTEMPTS}. Р–РґСѓ РѕС‚РІРµС‚РЅС‹Р№ NAT punch."
+                    "QUIC handshake, попытка {attempt}/{CLIENT_CONNECT_RETRY_ATTEMPTS}. Жду ответный NAT punch."
                 ));
             })
             .await;
 
             let connect = endpoint
                 .connect(peer_addr, "localhost")
-                .context("РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїСѓСЃС‚РёС‚СЊ QUIC connect")?;
+                .context("не удалось запустить QUIC connect")?;
 
             match timeout(Duration::from_millis(CLIENT_CONNECT_TIMEOUT_MS), connect).await {
                 Ok(Ok(connection)) => return Ok(connection),
@@ -1107,7 +1087,7 @@ impl NetworkManager {
             tokio::time::sleep(Duration::from_millis(CLIENT_CONNECT_DELAY_MS)).await;
         }
 
-        Err(last_error.unwrap_or_else(|| anyhow!("РЅРµ СѓРґР°Р»РѕСЃСЊ СѓСЃС‚Р°РЅРѕРІРёС‚СЊ QUIC session")))
+        Err(last_error.unwrap_or_else(|| anyhow!("не удалось установить QUIC session")))
     }
 
     fn bind_shared_udp_socket() -> Result<(std::net::UdpSocket, Arc<UdpSocket>, SocketAddr)> {

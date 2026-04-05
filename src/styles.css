@@ -65,6 +65,7 @@ body {
 
 body {
   overflow: hidden;
+  padding: 10px;
   font-family:
     "Segoe UI",
     "Inter",
@@ -118,8 +119,15 @@ input:focus {
 .app-shell {
   display: grid;
   grid-template-columns: 82px 1fr;
-  width: 100vw;
-  height: 100vh;
+  width: calc(100vw - 20px);
+  height: calc(100vh - 20px);
+  border-radius: 28px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 92%, transparent);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+    0 32px 90px rgba(0, 0, 0, 0.5);
+  background: color-mix(in srgb, var(--window-bg) 86%, transparent);
 }
 
 .sidebar {
@@ -181,13 +189,15 @@ input:focus {
 .nav-icon {
   width: 24px;
   height: 24px;
-  opacity: 0.92;
+  opacity: 1;
+  filter: brightness(1.45) saturate(1.08);
 }
 
 .profile-icon-svg {
   width: 22px;
   height: 22px;
-  opacity: 0.92;
+  opacity: 1;
+  filter: brightness(1.4) saturate(1.05);
 }
 
 .sidebar-brand {
@@ -237,6 +247,7 @@ input:focus {
   backdrop-filter: blur(24px) saturate(150%);
   -webkit-backdrop-filter: blur(24px) saturate(150%);
   cursor: move;
+  user-select: none;
 }
 
 [data-overlay-drag="true"] {
@@ -390,7 +401,8 @@ input:focus {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding-right: 4px;
+  padding-right: 8px;
+  padding-bottom: 28px;
 }
 
 .page-active {

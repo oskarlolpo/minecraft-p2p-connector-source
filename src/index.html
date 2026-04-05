@@ -34,16 +34,16 @@
             </div>
             <div class="overlay-brand-copy">
               <strong>Blood Paradise Hub</strong>
-              <span id="overlay-status-line">РћРІРµСЂР»РµР№ СЃРєСЂС‹С‚ РІ С‚СЂРµРµ. РћС‚РєСЂС‹РІР°Р№С‚Рµ РµРіРѕ РіРѕСЂСЏС‡РµР№ РєР»Р°РІРёС€РµР№.</span>
+              <span id="overlay-status-line">Оверлей скрыт в трее. Открывайте его горячей клавишей.</span>
             </div>
           </div>
 
           <div class="overlay-actions">
             <button id="open-profile-modal" class="profile-pill" type="button">
               <span id="topbar-profile-avatar" class="profile-pill-avatar">BP</span>
-              <span id="topbar-profile-name">Р›РѕРєР°Р»СЊРЅС‹Р№ РёРіСЂРѕРє</span>
+              <span id="topbar-profile-name">Локальный игрок</span>
             </button>
-            <div id="overlay-shortcut-chip" class="shortcut-chip" role="button" tabindex="0" title="РќР°Р¶РјРёС‚Рµ, С‡С‚РѕР±С‹ СЃРјРµРЅРёС‚СЊ РіРѕСЂСЏС‡СѓСЋ РєР»Р°РІРёС€Сѓ">SHIFT+TAB</div>
+            <div id="overlay-shortcut-chip" class="shortcut-chip" role="button" tabindex="0" title="Нажмите, чтобы сменить горячую клавишу">SHIFT+TAB</div>
             <div class="window-controls" data-no-drag>
               <button id="hide-overlay-button" class="secondary-button compact window-control-button" type="button">−</button>
               <button id="overlay-close-button" class="secondary-button compact window-control-button close" type="button">×</button>
@@ -199,16 +199,16 @@
                   РћР¶РёРґР°РЅРёРµ С‚СѓРЅРЅРµР»СЏ...
                 </div>
                 <label class="field" style="margin-top: 16px;">
-                  <span>Diagnostic Test Port</span>
+                  <span>Порт тестового сервера</span>
                   <input id="test-server-port" type="number" min="1" max="65535" value="25566" />
                 </label>
                 <div class="selected-actions" style="margin-top: 16px;">
-                  <button id="run-preflight" class="secondary-button" type="button">Run Preflight</button>
-                  <button id="start-test-server" class="secondary-button" type="button">Start Test Server</button>
-                  <button id="stop-test-server" class="secondary-button" type="button">Stop Test Server</button>
+                  <button id="run-preflight" class="secondary-button" type="button">Запустить Preflight</button>
+                  <button id="start-test-server" class="secondary-button" type="button">Запустить тестовый сервер</button>
+                  <button id="stop-test-server" class="secondary-button" type="button">Остановить тестовый сервер</button>
                 </div>
                 <div class="selected-actions" style="margin-top: 10px;">
-                  <button id="probe-test-server" class="secondary-button" type="button">Connect Test Server</button>
+                  <button id="probe-test-server" class="secondary-button" type="button">Подключиться к тестовому серверу</button>
                 </div>
               </section>
 
@@ -223,7 +223,7 @@
                   </button>
                 </div>
                 <div class="panel-note" id="yggstack-status" style="margin-bottom: 14px;">
-                  Yggstack: runtime РµС‰С‘ РЅРµ РїРѕРґРіРѕС‚РѕРІР»РµРЅ.
+                  Yggstack: runtime ещё не подготовлен.
                 </div>
                 <div class="selected-actions" style="margin-bottom: 14px;">
                   <button id="prepare-yggstack" class="secondary-button" type="button">Проверить Yggstack</button>
@@ -232,7 +232,7 @@
                   <button id="stop-yggstack" class="secondary-button" type="button">Остановить Yggstack</button>
                 </div>
                 <div class="selected-actions" style="margin-bottom: 14px;">
-                  <button id="copy-diagnostics" class="secondary-button" type="button">Copy Diagnostics JSON</button>
+                  <button id="copy-diagnostics" class="secondary-button" type="button">Копировать Diagnostics JSON</button>
                 </div>
                 <div id="logs" class="log-list"></div>
               </section>
@@ -255,8 +255,8 @@
             <section class="panel">
               <div class="panel-header">
                 <div>
-                  <p class="section-label">РџР РћР¤РР›Р¬</p>
-                  <h2>Р›РѕРєР°Р»СЊРЅС‹Р№ РёРіСЂРѕРє Рё РѕРІРµСЂР»РµР№</h2>
+                  <p class="section-label">ПРОФИЛЬ</p>
+                  <h2>Локальный игрок и overlay</h2>
                 </div>
               </div>
 
@@ -264,30 +264,30 @@
                 <div class="profile-preview-card">
                   <div id="settings-avatar-preview" class="profile-preview-avatar">BP</div>
                   <div class="profile-preview-copy">
-                    <strong id="settings-profile-name">Р›РѕРєР°Р»СЊРЅС‹Р№ РёРіСЂРѕРє</strong>
-                    <span id="settings-profile-subtitle">Р­С‚РѕС‚ РїСЂРѕС„РёР»СЊ РїСѓР±Р»РёРєСѓРµС‚СЃСЏ РІ lobby Рё РѕС‚РѕР±СЂР°Р¶Р°РµС‚СЃСЏ РІ overlay.</span>
+                    <strong id="settings-profile-name">Локальный игрок</strong>
+                    <span id="settings-profile-subtitle">Этот профиль публикуется в lobby и отображается в overlay.</span>
                   </div>
                 </div>
 
                 <div class="profile-form-stack">
                   <label class="field">
-                    <span>РќРёРє РёРіСЂРѕРєР°</span>
-                    <input id="settings-nickname" type="text" maxlength="24" placeholder="РќР°РїСЂРёРјРµСЂ, Oskar" />
+                    <span>Ник игрока</span>
+                    <input id="settings-nickname" type="text" maxlength="24" placeholder="Например, Oskar" />
                   </label>
 
                   <label class="field">
-                    <span>РђРІР°С‚Р°СЂ</span>
+                    <span>Аватар</span>
                     <input id="settings-avatar-input" type="file" accept="image/*" />
                   </label>
 
                   <label class="field">
-                    <span>Р“РѕСЂСЏС‡Р°СЏ РєР»Р°РІРёС€Р° overlay</span>
+                    <span>Горячая клавиша overlay</span>
                     <input id="settings-shortcut-input" type="text" maxlength="32" placeholder="SHIFT+TAB" readonly />
                   </label>
 
                   <div class="modal-actions profile-actions">
-                    <button id="clear-avatar-button" class="secondary-button" type="button">РћС‡РёСЃС‚РёС‚СЊ Р°РІР°С‚Р°СЂ</button>
-                    <button id="save-profile-button" class="gradient-button small" type="button">РЎРѕС…СЂР°РЅРёС‚СЊ РїСЂРѕС„РёР»СЊ</button>
+                    <button id="clear-avatar-button" class="secondary-button" type="button">Очистить аватар</button>
+                    <button id="save-profile-button" class="gradient-button small" type="button">Сохранить профиль</button>
                   </div>
                 </div>
               </div>
@@ -349,7 +349,7 @@
             <p class="section-label" data-i18n="modalLabel">РљРћРќР¤РР“РЈР РђР¦РРЇ РҐРћРЎРўРђ</p>
             <h2 id="host-modal-title" data-i18n="modalTitle">РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ С…РѕСЃС‚Р°</h2>
           </div>
-          <button id="close-modal" class="icon-button" type="button" aria-label="Р—Р°РєСЂС‹С‚СЊ">Г—</button>
+          <button id="close-modal" class="icon-button" type="button" aria-label="Закрыть">×</button>
         </div>
 
         <label class="field">
@@ -386,7 +386,7 @@
 
         <label class="checkbox-row">
           <input id="use-yggstack" type="checkbox" checked />
-          <span>Р—Р°РїСѓСЃС‚РёС‚СЊ С‡РµСЂРµР· Yggstack</span>
+          <span>Запустить через Yggstack</span>
         </label>
 
         <label id="password-field-group" class="field hidden">
@@ -395,7 +395,7 @@
             id="room-password"
             type="password"
             maxlength="32"
-            placeholder="вЂўвЂўвЂўвЂўвЂўвЂўвЂўвЂў"
+            placeholder="••••••••"
             data-i18n-placeholder="modalPasswordPlaceholder"
           />
         </label>
@@ -416,40 +416,40 @@
       <div class="modal-card profile-modal-card" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title">
         <div class="panel-header">
           <div>
-            <p class="section-label">РџР РћР¤РР›Р¬ Р РћР’Р•Р Р›Р•Р™</p>
-            <h2 id="profile-modal-title">РџРµСЂРІРёС‡РЅР°СЏ РЅР°СЃС‚СЂРѕР№РєР°</h2>
+            <p class="section-label">ПРОФИЛЬ И OVERLAY</p>
+            <h2 id="profile-modal-title">Первичная настройка</h2>
           </div>
-          <button id="close-profile-modal" class="icon-button" type="button" aria-label="Р—Р°РєСЂС‹С‚СЊ">Г—</button>
+          <button id="close-profile-modal" class="icon-button" type="button" aria-label="Закрыть">×</button>
         </div>
 
         <div class="profile-modal-layout">
           <div class="profile-preview-card profile-preview-card-modal">
             <div id="profile-avatar-preview" class="profile-preview-avatar">BP</div>
             <div class="profile-preview-copy">
-              <strong>РљР°Рє РІР°СЃ СѓРІРёРґСЏС‚ РґСЂСѓРіРёРµ РёРіСЂРѕРєРё</strong>
-              <span>РќРёРє, Р°РІР°С‚Р°СЂ Рё СЃРѕС‡РµС‚Р°РЅРёРµ РєР»Р°РІРёС€ РјРѕР¶РЅРѕ Р±СѓРґРµС‚ РїРѕРјРµРЅСЏС‚СЊ РїРѕР·Р¶Рµ РІ РЅР°СЃС‚СЂРѕР№РєР°С….</span>
+              <strong>Как вас увидят другие игроки</strong>
+              <span>Ник, аватар и сочетание клавиш можно будет поменять позже в настройках.</span>
             </div>
           </div>
 
           <label class="field">
-            <span>РќРёРє РёРіСЂРѕРєР°</span>
-            <input id="profile-nickname-input" type="text" maxlength="24" placeholder="Р’РІРµРґРёС‚Рµ РІР°С€ РЅРёРє" />
+            <span>Ник игрока</span>
+            <input id="profile-nickname-input" type="text" maxlength="24" placeholder="Введите ваш ник" />
           </label>
 
           <label class="field">
-            <span>РђРІР°С‚Р°СЂ</span>
+            <span>Аватар</span>
             <input id="profile-avatar-input" type="file" accept="image/*" />
           </label>
 
           <label class="field">
-            <span>Р“РѕСЂСЏС‡Р°СЏ РєР»Р°РІРёС€Р° overlay</span>
+            <span>Горячая клавиша overlay</span>
             <input id="profile-shortcut-input" type="text" maxlength="32" placeholder="SHIFT+TAB" readonly />
           </label>
         </div>
 
         <div class="modal-actions profile-actions">
-          <button id="close-profile-modal-secondary" class="secondary-button" type="button">РџРѕР·Р¶Рµ</button>
-          <button id="save-profile-modal" class="gradient-button small" type="button">РЎРѕС…СЂР°РЅРёС‚СЊ</button>
+          <button id="close-profile-modal-secondary" class="secondary-button" type="button">Позже</button>
+          <button id="save-profile-modal" class="gradient-button small" type="button">Сохранить</button>
         </div>
       </div>
     </div>

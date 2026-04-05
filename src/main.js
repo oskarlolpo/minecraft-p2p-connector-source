@@ -634,7 +634,7 @@ function formatMode(mode) {
 }
 
 function formatTransportLabel(transport) {
-  if (transport === "cloudflare-webrtc") return "TURN/WebRTC";
+  if (transport === "yggstack" || transport === "yggstack-host") return "Yggstack";
   if (transport === "ably-relay") return "Ably MQTT relay";
   if (transport === "relay-circuit" || transport === "relay-reservation") return "Circuit Relay v2";
   if (transport === "direct-hole-punch") return "DCUtR hole punch";
@@ -934,9 +934,6 @@ function hydrateServers(members) {
         minecraftVersion: data.minecraft_version ?? null,
         transport: data.transport ?? null,
         transportPreference: data.transport_preference ?? (data.ygg_ready ? "yggstack" : "direct"),
-        cloudflareEnabled: Boolean(data.cloudflare_enabled),
-        cloudflareTurnReady: Boolean(data.cloudflare_turn_ready),
-        cloudflareTurnEndpoint: data.cloudflare_turn_endpoint ?? null,
         yggReady: Boolean(data.ygg_ready),
         yggAddress: data.ygg_address ?? null,
         yggPublicKey: data.ygg_public_key ?? null,
@@ -969,9 +966,6 @@ function buildPresencePayload(status) {
     minecraft_version: hostSession.minecraftVersion ?? status?.minecraftVersion ?? null,
     transport: status?.transportPath ?? state.activeTunnelTransport ?? null,
     transport_preference: hostSession.yggEnabled ? "yggstack" : "direct",
-    cloudflare_enabled: false,
-    cloudflare_turn_ready: false,
-    cloudflare_turn_endpoint: null,
     ygg_ready: Boolean(hostSession.yggEnabled && hostSession.yggAddress),
     ygg_address: hostSession.yggAddress ?? null,
     ygg_endpoint: hostSession.yggAddress ? `/ip6/${hostSession.yggAddress}/tcp/25565` : null,
@@ -1114,47 +1108,6 @@ async function bindChannelHandlers() {
       }
     });
 
-    await state.privateChannel.subscribe("cloudflare-offer", async (message) => {
-      const requester = message.data?.client_id ?? message.clientId ?? "unknown";
-      const sessionId = message.data?.session_id;
-      const offerJson = message.data?.offer_json;
-      const peerAddr = message.data?.peer_addr ?? "unknown";
-      if (!sessionId || !offerJson) return;
-
-      try {
-        addLog(`TURN/WebRTC offer получен от ${requester}.`);
-        const answerJson = await invoke("cloudflare_accept_offer", {
-          sessionId,
-          offerJson,
-          peerAddr,
-        });
-        await state.realtime.channels.get(`lobby:${requester}`).publish("cloudflare-answer", {
-          client_id: localClientId,
-          session_id: sessionId,
-          answer_json: answerJson,
-          peer_addr: hostSession.peerAddr,
-        });
-        addLog(`TURN/WebRTC answer отправлен клиенту ${requester}.`);
-      } catch (error) {
-        addLog(`TURN/WebRTC host answer failed: ${String(error)}`);
-      }
-    });
-
-    await state.privateChannel.subscribe("cloudflare-answer", async (message) => {
-      const sessionId = message.data?.session_id;
-      const answerJson = message.data?.answer_json;
-      if (!sessionId || !answerJson) return;
-
-      try {
-        addLog("TURN/WebRTC answer получен от хоста.");
-        await invoke("cloudflare_finish_client_answer", { sessionId, answerJson });
-      } catch (error) {
-        addLog(`TURN/WebRTC client answer apply failed: ${String(error)}`);
-        if (state.pendingTransportFlow) {
-          await startRelayFallback(state.pendingTransportFlow);
-        }
-      }
-    });
     state.privateChannel.__mcp2pHandshakeBound = true;
   }
 }
@@ -1295,159 +1248,6 @@ async function copyDiagnosticsSnapshot() {
     addLog("Полная диагностика скопирована в буфер обмена.");
   } catch (error) {
     addLog(`Не удалось выгрузить диагностику: ${String(error)}`);
-  }
-}
-
-async function probeEmbeddedTestServer() {
-  const port = Number(testServerPortEl.value || 25566);
-  try {
-    const payload = `diagnostic-ping:${Date.now()}`;
-    const response = await invoke("probe_test_server_command", {
-      port,
-      payload,
-    });
-    addLog(`Тестовый сервер ответил с 127.0.0.1:${port}: ${response || "<empty>"}`);
-  } catch (error) {
-    addLog(`Не удалось подключиться к тестовому серверу на 127.0.0.1:${port}: ${String(error)}`);
-  }
-}
-
-async function refreshYggstackRuntime({ silent = true } = {}) {
-  try {
-    const info = await invoke("get_yggstack_runtime_info");
-    renderYggstackRuntime(info);
-    if (!silent) addLog(`Yggstack status: ${info.note}`);
-  } catch (error) {
-    if (!silent) addLog(`Не удалось получить статус Yggstack: ${String(error)}`);
-  }
-}
-
-async function prepareYggstackRuntimeActionLegacy() {
-  try {
-    const info = await invoke("prepare_yggstack_runtime");
-    renderYggstackRuntime(info);
-    addLog(`Yggstack runtime подготовлен. Бинарник: ${info.binaryPath ?? "n/a"}`);
-  } catch (error) {
-    addLog(`Не удалось подготовить Yggstack runtime: ${String(error)}`);
-  }
-}
-
-async function startYggstackSidecarActionLegacy() {
-  try {
-    const info = await invoke("start_yggstack_sidecar");
-    renderYggstackRuntime(info);
-    addLog(`Yggstack sidecar запущен. Лог: ${info.logPath ?? "n/a"}`);
-  } catch (error) {
-    addLog(`Не удалось запустить Yggstack sidecar: ${String(error)}`);
-  }
-}
-
-async function stopYggstackSidecarActionLegacy() {
-  try {
-    const info = await invoke("stop_yggstack_sidecar");
-    renderYggstackRuntime(info);
-    addLog("Yggstack sidecar остановлен.");
-  } catch (error) {
-    addLog(`Не удалось остановить Yggstack sidecar: ${String(error)}`);
-  }
-}
-
-function renderYggstackRuntime(info) {
-  state.yggstackInfo = info ?? null;
-  if (!yggstackStatusEl) return;
-  if (!info) {
-    yggstackStatusEl.textContent = "Yggstack: runtime ещё не проверен.";
-    return;
-  }
-
-  const embedded = info.binaryPath === "embedded://yggstackbridge";
-  let stateLabel = "runtime не готов";
-  if (info.running) {
-    stateLabel = embedded ? "встроенный bridge запущен" : "runtime запущен";
-  } else if (info.ready) {
-    stateLabel = embedded ? "встроенный bridge готов" : "runtime готов";
-  }
-
-  yggstackStatusEl.textContent = `Yggstack: ${stateLabel}. ${info.note ?? ""}`.trim();
-}
-
-async function prepareYggstackRuntimeAction() {
-  try {
-    const info = await invoke("prepare_yggstack_runtime");
-    renderYggstackRuntime(info);
-    addLog(`Yggstack готов. Источник: ${info.binaryPath ?? "embedded"}`);
-  } catch (error) {
-    addLog(`Не удалось подготовить Yggstack: ${String(error)}`);
-  }
-}
-
-async function startYggstackSidecarAction() {
-  try {
-    const info = await invoke("start_yggstack_sidecar");
-    renderYggstackRuntime(info);
-    addLog(
-      info.binaryPath === "embedded://yggstackbridge"
-        ? "Встроенный Yggstack bridge запущен."
-        : `Yggstack runtime запущен. Лог: ${info.logPath ?? "n/a"}`,
-    );
-  } catch (error) {
-    addLog(`Не удалось запустить Yggstack: ${String(error)}`);
-  }
-}
-
-async function retryYggstackPeersAction() {
-  try {
-    const info = await invoke("retry_yggstack_peers");
-    renderYggstackRuntime(info);
-    addLog("Yggstack: запущено повторное обновление peer-узлов.");
-  } catch (error) {
-    addLog(`Не удалось обновить peer-узлы Yggstack: ${String(error)}`);
-  }
-}
-
-async function stopYggstackSidecarAction() {
-  try {
-    const info = await invoke("stop_yggstack_sidecar");
-    renderYggstackRuntime(info);
-    addLog(
-      info.binaryPath === "embedded://yggstackbridge"
-        ? "Встроенный Yggstack bridge остановлен."
-        : "Yggstack runtime остановлен.",
-    );
-  } catch (error) {
-    addLog(`Не удалось остановить Yggstack: ${String(error)}`);
-  }
-}
-
-async function ensureYggstackReady({ autoStart = false, silent = false } = {}) {
-  try {
-    let info = await invoke("get_yggstack_runtime_info");
-    renderYggstackRuntime(info);
-
-    if (!info?.ready) {
-      info = await invoke("prepare_yggstack_runtime");
-      renderYggstackRuntime(info);
-      if (!silent) {
-        addLog(`Yggstack подготовлен. Источник: ${info.binaryPath ?? "embedded"}.`);
-      }
-    }
-
-    if (autoStart && info?.ready && !info.running) {
-      info = await invoke("start_yggstack_sidecar");
-      renderYggstackRuntime(info);
-      if (!silent) {
-        addLog(
-          info.binaryPath === "embedded://yggstackbridge"
-            ? "Встроенный Yggstack bridge автоматически запущен."
-            : "Yggstack runtime автоматически запущен.",
-        );
-      }
-    }
-
-    return info;
-  } catch (error) {
-    if (!silent) addLog(`Не удалось подготовить Yggstack runtime: ${String(error)}`);
-    return null;
   }
 }
 
@@ -1657,6 +1457,14 @@ async function connectToServer(server) {
     if (server.yggReady && server.yggAddress) {
       addLog(`Хост ${server.roomName} публикует Ygg-адрес [${server.yggAddress}].`);
     }
+
+    if (server.yggReady && server.yggAddress && server.transportPreference === "yggstack") {
+      addLog(`Комната ${server.roomName} помечена как Yggstack-preferred. Поднимаю Ygg-туннель сразу.`);
+      const info = await invoke("start_ygg_client_mapping", { remoteYggAddress: server.yggAddress });
+      renderYggstackRuntime(info);
+      return;
+    }
+
     const relaySessionId = `relay-${crypto.randomUUID()}`;
     const peerAddrs = sortAdvertisedAddrs(
       [...new Set([...(server.peerAddrs ?? []), normalizeToMultiaddr(server.peerAddr)].filter(Boolean))],

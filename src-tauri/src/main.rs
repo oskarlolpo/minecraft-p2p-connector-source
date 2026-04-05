@@ -288,11 +288,12 @@ async fn start_ygg_host_mapping(
     state: State<'_, AppState>,
     local_port: u16,
 ) -> Result<YggstackRuntimeInfo, String> {
-    let info = state
+    state
         .yggstack
         .start_host_mapping(local_port)
         .await
         .map_err(|error| format!("{error:#}"))?;
+    let info = state.yggstack.runtime_info().await;
 
     {
         let shared_status = state.manager.shared_status();
@@ -327,11 +328,12 @@ async fn start_ygg_client_mapping(
     state: State<'_, AppState>,
     remote_ygg_address: String,
 ) -> Result<YggstackRuntimeInfo, String> {
-    let info = state
+    state
         .yggstack
         .start_client_mapping(&remote_ygg_address)
         .await
         .map_err(|error| format!("{error:#}"))?;
+    let info = state.yggstack.runtime_info().await;
 
     {
         let shared_status = state.manager.shared_status();
