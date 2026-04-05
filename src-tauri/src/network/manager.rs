@@ -121,6 +121,7 @@ impl NetworkManager {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::new_with_shared(
             Arc::new(RwLock::new(NetworkStatus::default())),

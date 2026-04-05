@@ -19,7 +19,7 @@ const openHostModalEl = document.querySelector("#open-host-modal");
 const closeModalEl = document.querySelector("#close-modal");
 const closeModalSecondaryEl = document.querySelector("#close-modal-secondary");
 const requirePasswordEl = document.querySelector("#require-password");
-const useCloudflareEl = document.querySelector("#use-cloudflare");
+const useYggstackEl = document.querySelector("#use-yggstack");
 const passwordFieldGroupEl = document.querySelector("#password-field-group");
 const roomNameEl = document.querySelector("#room-name");
 const roomPasswordEl = document.querySelector("#room-password");
@@ -65,6 +65,7 @@ const pageHomeEl = document.querySelector("#page-home");
 const pageSettingsEl = document.querySelector("#page-settings");
 const portHelpEl = document.querySelector("#port-help");
 const hideOverlayButtonEl = document.querySelector("#hide-overlay-button");
+const overlayTopbarEl = document.querySelector("#overlay-topbar");
 const openProfileModalEl = document.querySelector("#open-profile-modal");
 const overlayShortcutChipEl = document.querySelector("#overlay-shortcut-chip");
 const overlayStatusLineEl = document.querySelector("#overlay-status-line");
@@ -100,7 +101,6 @@ const hostSession = {
   minecraftVersion: null,
   presencePayload: null,
   presenceEntered: false,
-  useCloudflare: false,
   yggEnabled: false,
   yggAddress: null,
   yggPublicKey: null,
@@ -127,6 +127,7 @@ const state = {
   yggstackInfo: null,
   page: "home",
   preferences: loadPreferences(),
+  shortcutCapture: null,
 };
 
 function ensureClientId() {
@@ -189,12 +190,121 @@ function currentNickname() {
   return state.preferences.profile.nickname?.trim() || localClientId;
 }
 
+function activeProfileNicknameDraft() {
+  const active = document.activeElement;
+  if (active === settingsNicknameEl || active === profileNicknameInputEl) {
+    return active.value?.trim() || "";
+  }
+  return "";
+}
+
+function setInputValueUnlessFocused(element, value) {
+  if (!element || document.activeElement === element) return;
+  element.value = value;
+}
+
 function normalizedShortcut(value) {
   return String(value || "SHIFT+TAB")
     .trim()
     .replace(/\s+/g, "")
-    .replaceAll("+", "+")
     .toUpperCase();
+}
+
+function shortcutMainKeyFromEvent(event) {
+  const { code, key } = event;
+  if (["ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight", "AltLeft", "AltRight", "MetaLeft", "MetaRight"].includes(code)) {
+    return null;
+  }
+  if (code.startsWith("Key")) return code.slice(3).toUpperCase();
+  if (code.startsWith("Digit")) return code.slice(5);
+  if (code.startsWith("Numpad")) return code.slice(6).toUpperCase();
+  if (/^F\d+$/.test(code)) return code.toUpperCase();
+
+  const aliases = {
+    Space: "SPACE",
+    Tab: "TAB",
+    Enter: "ENTER",
+    Escape: "ESC",
+    Backspace: "BACKSPACE",
+    Delete: "DELETE",
+    Insert: "INSERT",
+    Home: "HOME",
+    End: "END",
+    PageUp: "PAGEUP",
+    PageDown: "PAGEDOWN",
+    ArrowUp: "UP",
+    ArrowDown: "DOWN",
+    ArrowLeft: "LEFT",
+    ArrowRight: "RIGHT",
+    Minus: "-",
+    Equal: "=",
+    BracketLeft: "[",
+    BracketRight: "]",
+    Backslash: "\\",
+    Semicolon: ";",
+    Quote: "'",
+    Comma: ",",
+    Period: ".",
+    Slash: "/",
+    Backquote: "`",
+  };
+
+  if (aliases[code]) return aliases[code];
+
+  return key?.length === 1 ? key.toUpperCase() : key?.toUpperCase() || null;
+}
+
+function shortcutFromKeyboardEvent(event) {
+  const mainKey = shortcutMainKeyFromEvent(event);
+  if (!mainKey) return null;
+
+  const parts = [];
+  if (event.ctrlKey) parts.push("CTRL");
+  if (event.altKey) parts.push("ALT");
+  if (event.shiftKey) parts.push("SHIFT");
+  if (event.metaKey) parts.push("META");
+  parts.push(mainKey);
+
+  return normalizedShortcut(parts.join("+"));
+}
+
+function renderShortcutCaptureState() {
+  const active = Boolean(state.shortcutCapture);
+  overlayShortcutChipEl?.classList.toggle("capturing", active);
+  if (overlayShortcutChipEl) {
+    overlayShortcutChipEl.textContent = active
+      ? "Нажмите клавишу"
+      : normalizedShortcut(state.preferences.profile.overlayShortcut);
+  }
+}
+
+async function persistOverlayShortcut(shortcut) {
+  const normalized = normalizedShortcut(shortcut);
+  state.preferences.profile.overlayShortcut = normalized;
+  saveProfile();
+  await invoke("save_user_profile", {
+    profile: {
+      nickname: state.preferences.profile.nickname ?? "",
+      avatarDataUrl: state.preferences.profile.avatarDataUrl,
+      theme: state.preferences.theme,
+      language: state.preferences.language,
+      overlayShortcut: normalized,
+    },
+  });
+  syncProfileSurface();
+  rerender();
+  addLog(`Горячая клавиша overlay изменена: ${normalized}.`);
+}
+
+function startShortcutCapture(source = "chip") {
+  state.shortcutCapture = { source };
+  renderShortcutCaptureState();
+}
+
+function stopShortcutCapture() {
+  state.shortcutCapture = null;
+  renderShortcutCaptureState();
+  syncProfileSurface();
 }
 
 function avatarMarkup(label = currentNickname(), avatarDataUrl = state.preferences.profile.avatarDataUrl) {
@@ -288,19 +398,19 @@ function renderAvatarTarget(element, label = currentNickname(), avatarDataUrl = 
 }
 
 function syncProfileSurface() {
-  const nickname = currentNickname();
+  const nickname = activeProfileNicknameDraft() || currentNickname();
   const shortcut = normalizedShortcut(state.preferences.profile.overlayShortcut);
   state.preferences.profile.overlayShortcut = shortcut;
-  if (overlayShortcutChipEl) overlayShortcutChipEl.textContent = shortcut;
+  if (overlayShortcutChipEl && !state.shortcutCapture) overlayShortcutChipEl.textContent = shortcut;
   if (topbarProfileNameEl) topbarProfileNameEl.textContent = nickname;
   if (settingsProfileNameEl) settingsProfileNameEl.textContent = nickname;
   if (settingsProfileSubtitleEl) {
     settingsProfileSubtitleEl.textContent = `Оверлей открывается по ${shortcut}.`;
   }
-  if (settingsNicknameEl) settingsNicknameEl.value = state.preferences.profile.nickname ?? "";
-  if (settingsShortcutInputEl) settingsShortcutInputEl.value = shortcut;
-  if (profileNicknameInputEl) profileNicknameInputEl.value = state.preferences.profile.nickname ?? "";
-  if (profileShortcutInputEl) profileShortcutInputEl.value = shortcut;
+  setInputValueUnlessFocused(settingsNicknameEl, state.preferences.profile.nickname ?? "");
+  setInputValueUnlessFocused(settingsShortcutInputEl, shortcut);
+  setInputValueUnlessFocused(profileNicknameInputEl, state.preferences.profile.nickname ?? "");
+  setInputValueUnlessFocused(profileShortcutInputEl, shortcut);
   renderAvatarTarget(topbarProfileAvatarEl, nickname);
   renderAvatarTarget(settingsAvatarPreviewEl, nickname);
   renderAvatarTarget(profileAvatarPreviewEl, nickname);
@@ -608,7 +718,7 @@ function renderSelectedServer() {
         host: `${selected.hostName}${selected.clientId === localClientId ? " (you)" : ""} · ${selected.peerId}`,
         version: selected.minecraftVersion ?? t("serverUnknownVersion"),
         slots: selected.slots,
-        password: `${selected.hasPassword ? t("selectedMetaPassword") : ""}${selected.cloudflareEnabled ? " · Cloudflare" : ""}`,
+        password: `${selected.hasPassword ? t("selectedMetaPassword") : ""}${selected.yggReady ? " · Yggstack" : ""}`,
       })
     : t("selectedMetaEmpty");
 }
@@ -774,7 +884,7 @@ function renderServers() {
           <div class="server-main">
             <div class="server-main-top">
               <strong class="minecraft-name">${renderMinecraftFormattedText(server.roomName)}</strong>
-              <span class="row-chip">${server.cloudflareEnabled ? "☁" : server.hasPassword ? "🔒" : "⚔"}</span>
+              <span class="row-chip">${server.yggReady ? "YGG" : server.hasPassword ? "🔒" : "⚔"}</span>
             </div>
             <span>${escapeHtml(server.hostName)}${isLocal ? ` · ${escapeHtml(t("selfHostLabel"))}` : ""}</span>
           </div>
@@ -822,7 +932,7 @@ function hydrateServers(members) {
         localPort: data.local_port ?? 25565,
         minecraftVersion: data.minecraft_version ?? null,
         transport: data.transport ?? null,
-        transportPreference: data.transport_preference ?? "direct",
+        transportPreference: data.transport_preference ?? (data.ygg_ready ? "yggstack" : "direct"),
         cloudflareEnabled: Boolean(data.cloudflare_enabled),
         cloudflareTurnReady: Boolean(data.cloudflare_turn_ready),
         cloudflareTurnEndpoint: data.cloudflare_turn_endpoint ?? null,
@@ -857,10 +967,10 @@ function buildPresencePayload(status) {
     local_port: hostSession.localPort,
     minecraft_version: hostSession.minecraftVersion ?? status?.minecraftVersion ?? null,
     transport: status?.transportPath ?? state.activeTunnelTransport ?? null,
-    transport_preference: hostSession.useCloudflare ? "cloudflare" : "direct",
-    cloudflare_enabled: hostSession.useCloudflare,
-    cloudflare_turn_ready: Boolean(status?.cloudflareTurnReady),
-    cloudflare_turn_endpoint: status?.cloudflareTurnEndpoint ?? null,
+    transport_preference: hostSession.yggEnabled ? "yggstack" : "direct",
+    cloudflare_enabled: false,
+    cloudflare_turn_ready: false,
+    cloudflare_turn_endpoint: null,
     ygg_ready: Boolean(hostSession.yggEnabled && hostSession.yggAddress),
     ygg_address: hostSession.yggAddress ?? null,
     ygg_public_key: hostSession.yggPublicKey ?? null,
@@ -873,7 +983,6 @@ function syncHostSessionFromStatus(status) {
     hostSession.active = true;
     hostSession.roomName = status.roomCode ?? hostSession.roomName;
     hostSession.hasPassword = Boolean(status.passwordProtected);
-    hostSession.useCloudflare = Boolean(status.cloudflareEnabled ?? hostSession.useCloudflare);
     hostSession.peerAddr =
       advertisedEndpoint(hostSession.listenAddrs, status.publicUdpAddr ?? status.udpBindAddr) ?? hostSession.peerAddr;
     hostSession.localPort = status.localGamePort ?? hostSession.localPort;
@@ -886,7 +995,6 @@ function syncHostSessionFromStatus(status) {
   hostSession.peerAddr = null;
   hostSession.minecraftVersion = null;
   hostSession.presenceEntered = false;
-  hostSession.useCloudflare = false;
 }
 
 function updateHintFromStatus(status) {
@@ -1343,7 +1451,7 @@ async function startHosting() {
 
   const localPort = Number(localGamePortEl.value || 25565);
   const password = requirePasswordEl.checked ? roomPasswordEl.value.trim() || null : null;
-  let useCloudflare = Boolean(useCloudflareEl.checked);
+  const useYggstack = Boolean(useYggstackEl?.checked);
   hostButtonEl.disabled = true;
   state.tunnelReady = false;
   setMinecraftHint(t("hintWaiting"), false);
@@ -1355,23 +1463,16 @@ async function startHosting() {
       return;
     }
 
-    const yggInfo = await ensureYggstackReady({ autoStart: true, silent: false });
-    hostSession.yggEnabled = Boolean(yggInfo?.ready);
-    hostSession.yggAddress = yggInfo?.yggAddress ?? null;
-    hostSession.yggPublicKey = yggInfo?.yggPublicKey ?? null;
-    hostSession.yggSubnet = yggInfo?.yggSubnet ?? null;
-
-    if (useCloudflare) {
-      const runtime = await invoke("get_cloudflare_runtime_info");
-      if (!runtime.ready) {
-        addLog(`Cloudflare fallback недоступен сейчас: ${runtime.note}`);
-        useCloudflare = false;
-      } else {
-        addLog(`Cloudflare TURN backend готов: ${runtime.turnEndpoint ?? "turn:turn.cloudflare.com:3478"}`);
-      }
+    let yggInfo = null;
+    if (useYggstack) {
+      yggInfo = await ensureYggstackReady({ autoStart: true, silent: false });
     }
+    hostSession.yggEnabled = Boolean(useYggstack && yggInfo?.ready);
+    hostSession.yggAddress = useYggstack ? yggInfo?.yggAddress ?? null : null;
+    hostSession.yggPublicKey = useYggstack ? yggInfo?.yggPublicKey ?? null : null;
+    hostSession.yggSubnet = useYggstack ? yggInfo?.yggSubnet ?? null : null;
 
-    const bootstrap = await invoke("start_hosting", { roomName, password, localPort, useCloudflare });
+    const bootstrap = await invoke("start_hosting", { roomName, password, localPort, useCloudflare: false });
     const status = await waitForStatus(
       (snapshot) => snapshot.mode === "host" && ["waitingForPeer", "hosting", "connected", "error"].includes(snapshot.state),
       22000,
@@ -1385,7 +1486,6 @@ async function startHosting() {
     hostSession.peerAddr = advertisedEndpoint(hostSession.listenAddrs, status.publicUdpAddr ?? status.udpBindAddr);
     hostSession.localPort = localPort;
     hostSession.minecraftVersion = status.minecraftVersion ?? null;
-    hostSession.useCloudflare = useCloudflare;
     hostSession.presencePayload = null;
     hostSession.presenceEntered = false;
     if (canAdvertiseHost()) {
@@ -1424,7 +1524,6 @@ async function stopSession() {
     hostSession.peerAddr = null;
     hostSession.localPort = 25565;
     hostSession.minecraftVersion = null;
-    hostSession.useCloudflare = false;
     hostSession.yggEnabled = false;
     hostSession.yggAddress = null;
     hostSession.yggPublicKey = null;
@@ -1739,6 +1838,35 @@ closeProfileModalSecondaryEl?.addEventListener("click", closeProfileModal);
 hideOverlayButtonEl?.addEventListener("click", async () => {
   await appWindow.hide();
 });
+overlayShortcutChipEl?.addEventListener("click", () => {
+  startShortcutCapture("chip");
+});
+overlayShortcutChipEl?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    startShortcutCapture("chip");
+  }
+});
+settingsShortcutInputEl?.addEventListener("focus", () => {
+  startShortcutCapture("settings");
+});
+settingsShortcutInputEl?.addEventListener("click", () => {
+  startShortcutCapture("settings");
+});
+profileShortcutInputEl?.addEventListener("focus", () => {
+  startShortcutCapture("profile");
+});
+profileShortcutInputEl?.addEventListener("click", () => {
+  startShortcutCapture("profile");
+});
+overlayTopbarEl?.addEventListener("pointerdown", async (event) => {
+  if (event.button !== 0) return;
+  if (!(event.target instanceof HTMLElement)) return;
+  if (event.target.closest("button, input, label")) return;
+  try {
+    await appWindow.startDragging();
+  } catch {}
+});
 
 requirePasswordEl.addEventListener("change", syncPasswordField);
 hostButtonEl.addEventListener("click", startHosting);
@@ -1824,6 +1952,12 @@ document.querySelectorAll("[data-theme-value]").forEach((button) => {
 document.querySelectorAll("[data-language-value]").forEach((button) => {
   button.addEventListener("click", () => applyLanguage(button.dataset.languageValue));
 });
+settingsNicknameEl?.addEventListener("input", () => {
+  syncProfileSurface();
+});
+profileNicknameInputEl?.addEventListener("input", () => {
+  syncProfileSurface();
+});
 saveProfileButtonEl?.addEventListener("click", async () => {
   await persistProfileFromFields(settingsNicknameEl, settingsShortcutInputEl, settingsAvatarInputEl);
 });
@@ -1854,6 +1988,21 @@ profileAvatarInputEl?.addEventListener("change", async () => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (state.shortcutCapture) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      stopShortcutCapture();
+      return;
+    }
+    const shortcut = shortcutFromKeyboardEvent(event);
+    if (!shortcut) {
+      return;
+    }
+    void persistOverlayShortcut(shortcut);
+    stopShortcutCapture();
+    return;
+  }
   if (event.key !== "Escape") return;
   if (!modalEl.classList.contains("hidden")) {
     closeModal();

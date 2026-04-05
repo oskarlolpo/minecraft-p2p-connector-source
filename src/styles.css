@@ -307,6 +307,17 @@ input:focus {
   letter-spacing: 0.08em;
 }
 
+.shortcut-chip[role="button"] {
+  cursor: pointer;
+}
+
+.shortcut-chip.capturing {
+  border-color: color-mix(in srgb, var(--accent-b) 55%, transparent);
+  background: color-mix(in srgb, var(--accent-b) 18%, transparent);
+  color: white;
+  box-shadow: var(--accent-glow);
+}
+
 .compact {
   min-height: 38px;
   padding-inline: 14px;

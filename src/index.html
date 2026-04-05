@@ -23,7 +23,7 @@
       </aside>
 
       <main class="workspace">
-        <header class="overlay-topbar" data-tauri-drag-region>
+        <header id="overlay-topbar" class="overlay-topbar" data-tauri-drag-region>
           <div class="overlay-brand">
             <div class="overlay-brand-mark">BP</div>
             <div class="overlay-brand-copy">
@@ -37,7 +37,7 @@
               <span id="topbar-profile-avatar" class="profile-pill-avatar">BP</span>
               <span id="topbar-profile-name">Локальный игрок</span>
             </button>
-            <div id="overlay-shortcut-chip" class="shortcut-chip">SHIFT+TAB</div>
+            <div id="overlay-shortcut-chip" class="shortcut-chip" role="button" tabindex="0" title="Нажмите, чтобы сменить горячую клавишу">SHIFT+TAB</div>
             <button id="hide-overlay-button" class="secondary-button compact" type="button">Скрыть</button>
           </div>
         </header>
@@ -273,7 +273,7 @@
 
                   <label class="field">
                     <span>Горячая клавиша overlay</span>
-                    <input id="settings-shortcut-input" type="text" maxlength="32" placeholder="SHIFT+TAB" />
+                    <input id="settings-shortcut-input" type="text" maxlength="32" placeholder="SHIFT+TAB" readonly />
                   </label>
 
                   <div class="modal-actions profile-actions">
@@ -376,8 +376,8 @@
         </label>
 
         <label class="checkbox-row">
-          <input id="use-cloudflare" type="checkbox" />
-          <span data-i18n="modalUseCloudflare">Использовать Cloudflare fallback</span>
+          <input id="use-yggstack" type="checkbox" checked />
+          <span>Запустить через Yggstack</span>
         </label>
 
         <label id="password-field-group" class="field hidden">
@@ -434,7 +434,7 @@
 
           <label class="field">
             <span>Горячая клавиша overlay</span>
-            <input id="profile-shortcut-input" type="text" maxlength="32" placeholder="SHIFT+TAB" />
+            <input id="profile-shortcut-input" type="text" maxlength="32" placeholder="SHIFT+TAB" readonly />
           </label>
         </div>
 
