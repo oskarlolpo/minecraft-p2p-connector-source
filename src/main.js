@@ -973,6 +973,7 @@ function buildPresencePayload(status) {
     cloudflare_turn_endpoint: null,
     ygg_ready: Boolean(hostSession.yggEnabled && hostSession.yggAddress),
     ygg_address: hostSession.yggAddress ?? null,
+    ygg_endpoint: hostSession.yggAddress ? `/ip6/${hostSession.yggAddress}/tcp/25565` : null,
     ygg_public_key: hostSession.yggPublicKey ?? null,
     ygg_subnet: hostSession.yggSubnet ?? null,
   };
@@ -1467,10 +1468,10 @@ async function startHosting() {
     if (useYggstack) {
       yggInfo = await ensureYggstackReady({ autoStart: true, silent: false });
     }
-    hostSession.yggEnabled = Boolean(useYggstack && yggInfo?.ready);
-    hostSession.yggAddress = useYggstack ? yggInfo?.yggAddress ?? null : null;
-    hostSession.yggPublicKey = useYggstack ? yggInfo?.yggPublicKey ?? null : null;
-    hostSession.yggSubnet = useYggstack ? yggInfo?.yggSubnet ?? null : null;
+    hostSession.yggEnabled = false;
+    hostSession.yggAddress = null;
+    hostSession.yggPublicKey = null;
+    hostSession.yggSubnet = null;
 
     const bootstrap = await invoke("start_hosting", { roomName, password, localPort, useCloudflare: false });
     const status = await waitForStatus(
@@ -1488,6 +1489,25 @@ async function startHosting() {
     hostSession.minecraftVersion = status.minecraftVersion ?? null;
     hostSession.presencePayload = null;
     hostSession.presenceEntered = false;
+    if (useYggstack && yggInfo?.ready) {
+      try {
+        const mappedInfo = await invoke("start_ygg_host_mapping", { localPort });
+        renderYggstackRuntime(mappedInfo);
+        hostSession.yggEnabled = Boolean(mappedInfo?.yggAddress);
+        hostSession.yggAddress = mappedInfo?.yggAddress ?? null;
+        hostSession.yggPublicKey = mappedInfo?.yggPublicKey ?? null;
+        hostSession.yggSubnet = mappedInfo?.yggSubnet ?? null;
+        if (hostSession.yggAddress) {
+          addLog(`Ygg host mapping ready: [${hostSession.yggAddress}]:25565 -> 127.0.0.1:${localPort}.`);
+        }
+      } catch (error) {
+        hostSession.yggEnabled = false;
+        hostSession.yggAddress = null;
+        hostSession.yggPublicKey = null;
+        hostSession.yggSubnet = null;
+        addLog(`Ygg host mapping failed: ${String(error)}`);
+      }
+    }
     if (canAdvertiseHost()) {
       await syncPresence(status, { force: true, enter: true });
     } else {
@@ -1513,6 +1533,12 @@ async function stopSession() {
   try {
     await safePresenceLeave(state.lobbyChannel);
     await invoke("stop_hosting");
+    if (hostSession.yggEnabled || state.activeTunnelTransport === "yggstack") {
+      try {
+        const info = await invoke("stop_yggstack_sidecar");
+        renderYggstackRuntime(info);
+      } catch {}
+    }
   } catch (error) {
     addLog(`Stop failed: ${String(error)}`);
   } finally {
@@ -1586,6 +1612,37 @@ async function startRelayFallback(flow) {
   }
 }
 
+async function startYggFallback(flow) {
+  if (!flow || flow.yggAttempted) return;
+  flow.yggAttempted = true;
+
+  const remoteYggAddress = flow.server?.yggAddress ?? null;
+  if (!remoteYggAddress) {
+    await startRelayFallback(flow);
+    return;
+  }
+
+  addLog(`Direct path не поднялся. Пробую Yggstack fallback через [${remoteYggAddress}]:25565.`);
+
+  try {
+    const info = await ensureYggstackReady({ autoStart: true, silent: true });
+    if (!info?.ready) {
+      addLog(`Yggstack runtime недоступен: ${info?.note ?? "runtime is not ready"}`);
+      await startRelayFallback(flow);
+      return;
+    }
+
+    const mappingInfo = await invoke("start_ygg_client_mapping", {
+      remoteYggAddress,
+    });
+    renderYggstackRuntime(mappingInfo);
+    addLog(`Yggstack tunnel armed: localhost:25565 -> [${remoteYggAddress}]:25565.`);
+  } catch (error) {
+    addLog(`Yggstack fallback failed: ${String(error)}`);
+    await startRelayFallback(flow);
+  }
+}
+
 async function connectToServer(server) {
   if (server.clientId === localClientId) {
     addLog(t("ownHostBlocked"));
@@ -1624,6 +1681,9 @@ async function connectToServer(server) {
         `Хост ${server.roomName} помечен как Cloudflare-preferred. Сначала пробуем direct path, затем текущий fallback.`,
       );
     }
+    if (server.yggReady && server.yggAddress) {
+      addLog(`Хост ${server.roomName} публикует Ygg-адрес [${server.yggAddress}].`);
+    }
     const relaySessionId = `${server.cloudflareEnabled ? "cfrelay" : "relay"}-${crypto.randomUUID()}`;
     const cloudflareSessionId = `cfwebrtc-${crypto.randomUUID()}`;
     const peerAddrs = sortAdvertisedAddrs(
@@ -1632,8 +1692,8 @@ async function connectToServer(server) {
     await invoke("connect_to_peer", {
       peerId: server.peerId,
       peerAddrs,
-      relaySessionId: cloudflarePreferred ? null : relaySessionId,
-      allowRelayFallback: !cloudflarePreferred,
+      relaySessionId: null,
+      allowRelayFallback: false,
     });
     const status = await waitForStatus(
       (snapshot) =>
@@ -1654,8 +1714,9 @@ async function connectToServer(server) {
       peerAddrs,
       relaySessionId,
       cloudflareSessionId,
+      yggAttempted: false,
       cloudflareAttempted: false,
-      relayAttempted: !cloudflarePreferred,
+      relayAttempted: false,
     };
     addLog(t("connectRequestSent", { host: server.clientId }));
   } catch (error) {
@@ -1717,6 +1778,7 @@ function rerender() {
 
 await listen("peer_connected", async (event) => {
   state.pendingConnects.clear();
+  state.pendingTransportFlow = null;
   state.tunnelReady = true;
   state.activeTunnelTransport = event.payload?.relayed ? "relay-circuit" : "direct";
   setMinecraftHint(t("hintConnected"), true);
@@ -1733,6 +1795,7 @@ await listen("peer_connected", async (event) => {
 
 await listen("connection_success", async (event) => {
   state.pendingConnects.clear();
+  state.pendingTransportFlow = null;
   state.tunnelReady = true;
   state.activeTunnelTransport = event.payload?.transport ?? "reverse-tunnel";
   setMinecraftHint(t("hintConnected"), true);
@@ -1773,6 +1836,10 @@ await listen("cloudflare_failed", async (event) => {
 
 await listen("tunnel_failed", async (event) => {
   addLog(`Tunnel failed: ${event.payload?.reason ?? "unknown"}`);
+  if (state.pendingTransportFlow?.server?.yggReady && state.pendingTransportFlow?.server?.yggAddress) {
+    await startYggFallback(state.pendingTransportFlow);
+    return;
+  }
   if (state.pendingTransportFlow?.server?.cloudflareEnabled && state.pendingTransportFlow?.server?.cloudflareTurnReady) {
     await startCloudflareFallback(state.pendingTransportFlow);
     return;
@@ -1859,13 +1926,21 @@ profileShortcutInputEl?.addEventListener("focus", () => {
 profileShortcutInputEl?.addEventListener("click", () => {
   startShortcutCapture("profile");
 });
-overlayTopbarEl?.addEventListener("pointerdown", async (event) => {
-  if (event.button !== 0) return;
-  if (!(event.target instanceof HTMLElement)) return;
-  if (event.target.closest("button, input, label")) return;
-  try {
-    await appWindow.startDragging();
-  } catch {}
+function isOverlayDragTarget(target) {
+  return (
+    target instanceof HTMLElement &&
+    !target.closest("button, input, label, textarea, select, a, [data-no-drag]")
+  );
+}
+
+document.querySelectorAll("[data-overlay-drag='true']").forEach((element) => {
+  element.addEventListener("pointerdown", async (event) => {
+    if (event.button !== 0) return;
+    if (!isOverlayDragTarget(event.target)) return;
+    try {
+      await appWindow.startDragging();
+    } catch {}
+  });
 });
 
 requirePasswordEl.addEventListener("change", syncPasswordField);

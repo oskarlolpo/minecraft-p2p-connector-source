@@ -161,6 +161,33 @@ input:focus {
   letter-spacing: 0.08em;
 }
 
+.brand-icon,
+.nav-icon,
+.profile-icon-svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.brand-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.brand-icon-large {
+  width: 26px;
+  height: 26px;
+}
+
+.nav-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.profile-icon-svg {
+  width: 22px;
+  height: 22px;
+}
+
 .sidebar-brand {
   margin-bottom: 6px;
   background:
@@ -175,6 +202,13 @@ input:focus {
     linear-gradient(180deg, color-mix(in srgb, var(--accent-a) 52%, transparent), color-mix(in srgb, var(--accent-b) 30%, transparent)),
     color-mix(in srgb, var(--panel-secondary) 90%, transparent);
   color: white;
+}
+
+.sidebar-brand .brand-icon,
+.overlay-brand-mark .brand-icon,
+.nav-button .nav-icon,
+.sidebar-profile .profile-icon-svg {
+  color: currentColor;
 }
 
 .workspace {
@@ -197,6 +231,11 @@ input:focus {
     rgba(10, 12, 18, 0.58);
   backdrop-filter: blur(24px) saturate(150%);
   -webkit-backdrop-filter: blur(24px) saturate(150%);
+  cursor: move;
+}
+
+[data-overlay-drag="true"] {
+  cursor: move;
 }
 
 .overlay-brand,

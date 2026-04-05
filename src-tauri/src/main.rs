@@ -11,8 +11,9 @@ mod signaling;
 
 use diagnostics::DiagnosticsStore;
 use models::{
-    CloudflareRuntimeInfo, DiagnosticSnapshot, NetworkChecks, NetworkStatus, PreflightReport,
-    SwarmBootstrap, TestServerInfo, UserProfile, YggstackRuntimeInfo,
+    CloudflareRuntimeInfo, ConnectionState, DiagnosticSnapshot, NetworkChecks, NetworkStatus,
+    PreflightReport, SessionMode, SwarmBootstrap, TestServerInfo, TransportKind, UserProfile,
+    YggstackRuntimeInfo,
 };
 use network::{
     cloudflare::CloudflareConfig,
@@ -32,7 +33,7 @@ use tauri::{
     menu::MenuEvent,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, State,
+    AppHandle, Emitter, Manager, State,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tokio::sync::{Mutex, RwLock};
@@ -280,6 +281,93 @@ async fn retry_yggstack_peers(
         .retry_peers()
         .await
         .map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+async fn start_ygg_host_mapping(
+    state: State<'_, AppState>,
+    local_port: u16,
+) -> Result<YggstackRuntimeInfo, String> {
+    let info = state
+        .yggstack
+        .start_host_mapping(local_port)
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+
+    {
+        let shared_status = state.manager.shared_status();
+        let mut status = shared_status.write().await;
+        status.transport_preference = Some("yggstack".into());
+        status.note = Some(format!(
+            "Yggstack host mapping active. Remote Ygg tcp/25565 -> 127.0.0.1:{local_port}."
+        ));
+        status.logs.insert(
+            0,
+            format!(
+                "Ygg host mapping ready: [{}]:25565 -> 127.0.0.1:{local_port}",
+                info.ygg_address.as_deref().unwrap_or("unknown")
+            ),
+        );
+        if status.logs.len() > 64 {
+            status.logs.truncate(64);
+        }
+    }
+
+    state
+        .diagnostics
+        .set_selected_transport("yggstack-host")
+        .await;
+
+    Ok(info)
+}
+
+#[tauri::command]
+async fn start_ygg_client_mapping(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    remote_ygg_address: String,
+) -> Result<YggstackRuntimeInfo, String> {
+    let info = state
+        .yggstack
+        .start_client_mapping(&remote_ygg_address)
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+
+    {
+        let shared_status = state.manager.shared_status();
+        let mut status = shared_status.write().await;
+        status.mode = SessionMode::Client;
+        status.state = ConnectionState::Connected;
+        status.transport_kind = TransportKind::MeshFallback;
+        status.transport_path = Some("yggstack".into());
+        status.transport_preference = Some("yggstack".into());
+        status.note = Some(
+            "Yggstack fallback active. Подключайтесь в Minecraft к localhost:25565.".into(),
+        );
+        status.last_error = None;
+        status.logs.insert(
+            0,
+            format!(
+                "Ygg client mapping ready: 127.0.0.1:25565 -> [{}]:25565",
+                remote_ygg_address
+            ),
+        );
+        if status.logs.len() > 64 {
+            status.logs.truncate(64);
+        }
+    }
+
+    state.diagnostics.set_selected_transport("yggstack").await;
+    let _ = app.emit(
+        "connection_success",
+        serde_json::json!({
+            "transport": "yggstack",
+            "peerAddr": remote_ygg_address,
+            "minecraftAddr": "127.0.0.1:25565"
+        }),
+    );
+
+    Ok(info)
 }
 
 #[tauri::command]
@@ -552,6 +640,8 @@ fn main() {
             start_yggstack_sidecar,
             stop_yggstack_sidecar,
             retry_yggstack_peers,
+            start_ygg_host_mapping,
+            start_ygg_client_mapping,
             cloudflare_create_offer,
             cloudflare_accept_offer,
             cloudflare_finish_client_answer,

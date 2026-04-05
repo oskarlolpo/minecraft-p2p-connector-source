@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     collections::HashMap,
     env,
     fs::{self, File},
@@ -109,7 +109,11 @@ impl YggstackManager {
     }
 
     pub async fn runtime_info(&self) -> YggstackRuntimeInfo {
-        if embedded_bridge_available() {
+        if self.refresh_running_flag() {
+            return self.sidecar_runtime_info();
+        }
+
+        if embedded_bridge_available() && !self.config.binary_path.exists() {
             return self.embedded_runtime_info();
         }
 
@@ -117,7 +121,7 @@ impl YggstackManager {
     }
 
     pub async fn prepare_runtime(&self) -> Result<YggstackRuntimeInfo> {
-        if embedded_bridge_available() {
+        if embedded_bridge_available() && !self.config.binary_path.exists() {
             let (_, bootstrap_count, bootstrap_source) = self.build_embedded_config().await?;
             let mut info = self.embedded_runtime_info();
             info.ready = true;
@@ -125,7 +129,7 @@ impl YggstackManager {
             info.config_path = Some(self.config.config_path.display().to_string());
             if info.note.is_empty() {
                 info.note = format!(
-                    "Ygg bootstrap подготовлен: {bootstrap_count} peer-узл(ов), источник {bootstrap_source}."
+                    "Ygg bootstrap РїРѕРґРіРѕС‚РѕРІР»РµРЅ: {bootstrap_count} peer-СѓР·Р»(РѕРІ), РёСЃС‚РѕС‡РЅРёРє {bootstrap_source}."
                 );
             } else {
                 info.note = format!(
@@ -138,12 +142,12 @@ impl YggstackManager {
 
         self.ensure_runtime_dir()?;
         self.ensure_binary_available().await?;
-        self.generate_config_if_missing().await?;
+        self.ensure_sidecar_config_ready().await?;
         Ok(self.sidecar_runtime_info())
     }
 
     pub async fn start_sidecar(&self) -> Result<YggstackRuntimeInfo> {
-        if embedded_bridge_available() {
+        if embedded_bridge_available() && !self.config.binary_path.exists() {
             let (config_json, bootstrap_count, bootstrap_source) =
                 self.build_embedded_config().await?;
             embedded_bridge_start_json(&config_json)?;
@@ -160,45 +164,8 @@ impl YggstackManager {
             return Ok(info);
         }
 
-        self.prepare_runtime().await?;
+        return self.start_sidecar_with_args(&[]).await;
 
-        if self.refresh_running_flag() {
-            return Ok(self.sidecar_runtime_info());
-        }
-
-        self.ensure_runtime_dir()?;
-        let log_file = File::options()
-            .create(true)
-            .append(true)
-            .open(&self.config.log_path)
-            .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ Р»РѕРі {}", self.config.log_path.display()))?;
-        let err_file = log_file
-            .try_clone()
-            .context("РЅРµ СѓРґР°Р»РѕСЃСЊ РєР»РѕРЅРёСЂРѕРІР°С‚СЊ С„Р°Р№Р»РѕРІС‹Р№ РґРµСЃРєСЂРёРїС‚РѕСЂ Р»РѕРіР° yggstack")?;
-
-        let mut command = Command::new(&self.config.binary_path);
-        command
-            .arg("-autoconf")
-            .arg("-logto")
-            .arg(&self.config.log_path)
-            .stdout(Stdio::from(log_file))
-            .stderr(Stdio::from(err_file));
-        let child = command
-            .configure_for_background()
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїСѓСЃС‚РёС‚СЊ yggstack РёР· {}",
-                    self.config.binary_path.display()
-                )
-            })?;
-
-        *self
-            .process
-            .lock()
-            .map_err(|_| anyhow!("mutex yggstack process poisoned"))? = Some(ManagedProcess { child });
-
-        Ok(self.sidecar_runtime_info())
     }
 
     pub async fn stop_sidecar(&self) -> Result<YggstackRuntimeInfo> {
@@ -229,6 +196,25 @@ impl YggstackManager {
         Ok(self.sidecar_runtime_info())
     }
 
+    pub async fn start_host_mapping(&self, local_game_port: u16) -> Result<YggstackRuntimeInfo> {
+        if local_game_port == 0 {
+            return Err(anyhow!("local game port must be greater than 0"));
+        }
+
+        let mapping = format!("-remote-tcp=25565:127.0.0.1:{local_game_port}");
+        self.start_sidecar_with_args(&[mapping.as_str()]).await
+    }
+
+    pub async fn start_client_mapping(
+        &self,
+        remote_ygg_address: &str,
+    ) -> Result<YggstackRuntimeInfo> {
+        let remote_ygg_address = normalize_ygg_address(remote_ygg_address)
+            .ok_or_else(|| anyhow!("invalid Ygg address: {remote_ygg_address}"))?;
+        let mapping = format!("-local-tcp=127.0.0.1:25565:[{remote_ygg_address}]:25565");
+        self.start_sidecar_with_args(&[mapping.as_str()]).await
+    }
+
     fn embedded_runtime_info(&self) -> YggstackRuntimeInfo {
         match embedded_bridge_status() {
             Ok(status) => {
@@ -237,9 +223,9 @@ impl YggstackManager {
                     note_parts.push(format!("embedded bridge error: {error}"));
                 }
                 if status.running {
-                    note_parts.push("Р’СЃС‚СЂРѕРµРЅРЅС‹Р№ Yggstack bridge Р·Р°РїСѓС‰РµРЅ.".into());
+                    note_parts.push("Р вЂ™РЎРѓРЎвЂљРЎР‚Р С•Р ВµР Р…Р Р…РЎвЂ№Р в„– Yggstack bridge Р В·Р В°Р С—РЎС“РЎвЂ°Р ВµР Р….".into());
                 } else {
-                    note_parts.push("Р’СЃС‚СЂРѕРµРЅРЅС‹Р№ Yggstack bridge РіРѕС‚РѕРІ.".into());
+                    note_parts.push("Р вЂ™РЎРѓРЎвЂљРЎР‚Р С•Р ВµР Р…Р Р…РЎвЂ№Р в„– Yggstack bridge Р С–Р С•РЎвЂљР С•Р Р†.".into());
                 }
                 if let Some(address) = status.address.as_deref() {
                     note_parts.push(format!("Ygg address: {address}"));
@@ -279,7 +265,7 @@ impl YggstackManager {
                 ygg_public_key: None,
                 ygg_address: None,
                 ygg_subnet: None,
-                note: format!("Р’СЃС‚СЂРѕРµРЅРЅС‹Р№ Yggstack bridge РЅРµРґРѕСЃС‚СѓРїРµРЅ: {error:#}"),
+                note: format!("Р вЂ™РЎРѓРЎвЂљРЎР‚Р С•Р ВµР Р…Р Р…РЎвЂ№Р в„– Yggstack bridge Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р…: {error:#}"),
             },
         }
     }
@@ -289,20 +275,35 @@ impl YggstackManager {
         let binary_exists = self.config.binary_path.exists();
         let config_exists = self.config.config_path.exists();
         let running = self.refresh_running_flag();
+        let ygg_address = if binary_exists && config_exists {
+            query_sidecar_value(&self.config.binary_path, &self.config.config_path, "-address").ok()
+        } else {
+            None
+        };
+        let ygg_public_key = if binary_exists && config_exists {
+            query_sidecar_value(&self.config.binary_path, &self.config.config_path, "-publickey").ok()
+        } else {
+            None
+        };
+        let ygg_subnet = if binary_exists && config_exists {
+            query_sidecar_value(&self.config.binary_path, &self.config.config_path, "-subnet").ok()
+        } else {
+            None
+        };
 
         if !binary_exists {
             note_parts.push(
-                "Yggstack binary не найден. Приложение ожидает встроенный bridge или bundled binary рядом с релизом.".into(),
+                "Yggstack binary РЅРµ РЅР°Р№РґРµРЅ. РџСЂРёР»РѕР¶РµРЅРёРµ РѕР¶РёРґР°РµС‚ РІСЃС‚СЂРѕРµРЅРЅС‹Р№ bridge РёР»Рё bundled binary СЂСЏРґРѕРј СЃ СЂРµР»РёР·РѕРј.".into(),
             );
         }
         if binary_exists && !config_exists {
-            note_parts.push("РљРѕРЅС„РёРі yggstack РµС‰С‘ РЅРµ СЃРіРµРЅРµСЂРёСЂРѕРІР°РЅ.".into());
+            note_parts.push("Р С™Р С•Р Р…РЎвЂћР С‘Р С– yggstack Р ВµРЎвЂ°РЎвЂ Р Р…Р Вµ РЎРѓР С–Р ВµР Р…Р ВµРЎР‚Р С‘РЎР‚Р С•Р Р†Р В°Р Р….".into());
         }
         if running {
-            note_parts.push("Yggstack sidecar Р·Р°РїСѓС‰РµРЅ.".into());
+            note_parts.push("Yggstack sidecar Р В·Р В°Р С—РЎС“РЎвЂ°Р ВµР Р….".into());
         }
         if note_parts.is_empty() {
-            note_parts.push("Yggstack runtime РіРѕС‚РѕРІ.".into());
+            note_parts.push("Yggstack runtime Р С–Р С•РЎвЂљР С•Р Р†.".into());
         }
 
         YggstackRuntimeInfo {
@@ -313,9 +314,9 @@ impl YggstackManager {
             binary_path: Some(self.config.binary_path.display().to_string()),
             config_path: Some(self.config.config_path.display().to_string()),
             log_path: Some(self.config.log_path.display().to_string()),
-            ygg_public_key: None,
-            ygg_address: None,
-            ygg_subnet: None,
+            ygg_public_key,
+            ygg_address,
+            ygg_subnet,
             note: note_parts.join(" "),
         }
     }
@@ -345,7 +346,7 @@ impl YggstackManager {
     fn ensure_runtime_dir(&self) -> Result<()> {
         fs::create_dir_all(&self.config.runtime_dir).with_context(|| {
             format!(
-                "РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ runtime РєР°С‚Р°Р»РѕРі {}",
+                "Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ РЎРѓР С•Р В·Р Т‘Р В°РЎвЂљРЎРЉ runtime Р С”Р В°РЎвЂљР В°Р В»Р С•Р С– {}",
                 self.config.runtime_dir.display()
             )
         })
@@ -367,16 +368,17 @@ impl YggstackManager {
 
             task::spawn_blocking(move || build_binary(&source_dir, &runtime_dir, &binary_path))
                 .await
-                .context("СЃР±РѕСЂРєР° yggstack task panicked")??;
+                .context("РЎРѓР В±Р С•РЎР‚Р С”Р В° yggstack task panicked")??;
 
             return Ok(());
         }
 
         Err(anyhow!(
-            "bundled yggstack binary РЅРµ РЅР°Р№РґРµРЅ. Р”РѕР±Р°РІСЊС‚Рµ yggstack.exe РІ СЂРµР»РёР· РёР»Рё СѓРєР°Р¶РёС‚Рµ MC_YGGSTACK_SOURCE_DIR РґР»СЏ dev-СЃР±РѕСЂРєРё"
+            "bundled yggstack binary Р Р…Р Вµ Р Р…Р В°Р в„–Р Т‘Р ВµР Р…. Р вЂќР С•Р В±Р В°Р Р†РЎРЉРЎвЂљР Вµ yggstack.exe Р Р† РЎР‚Р ВµР В»Р С‘Р В· Р С‘Р В»Р С‘ РЎС“Р С”Р В°Р В¶Р С‘РЎвЂљР Вµ MC_YGGSTACK_SOURCE_DIR Р Т‘Р В»РЎРЏ dev-РЎРѓР В±Р С•РЎР‚Р С”Р С‘"
         ))
     }
 
+    #[allow(dead_code)]
     async fn generate_config_if_missing(&self) -> Result<()> {
         if self.config.config_path.exists() {
             return Ok(());
@@ -387,7 +389,7 @@ impl YggstackManager {
 
         task::spawn_blocking(move || generate_config(&binary_path, &config_path))
             .await
-            .context("РіРµРЅРµСЂР°С†РёСЏ РєРѕРЅС„РёРіР° yggstack task panicked")??;
+            .context("Р С–Р ВµР Р…Р ВµРЎР‚Р В°РЎвЂ Р С‘РЎРЏ Р С”Р С•Р Р…РЎвЂћР С‘Р С–Р В° yggstack task panicked")??;
 
         Ok(())
     }
@@ -396,7 +398,7 @@ impl YggstackManager {
 fn build_binary(source_dir: &Path, runtime_dir: &Path, binary_path: &Path) -> Result<()> {
     fs::create_dir_all(runtime_dir).with_context(|| {
         format!(
-            "РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ runtime РєР°С‚Р°Р»РѕРі РґР»СЏ yggstack {}",
+            "Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ РЎРѓР С•Р В·Р Т‘Р В°РЎвЂљРЎРЉ runtime Р С”Р В°РЎвЂљР В°Р В»Р С•Р С– Р Т‘Р В»РЎРЏ yggstack {}",
             runtime_dir.display()
         )
     })?;
@@ -412,11 +414,11 @@ fn build_binary(source_dir: &Path, runtime_dir: &Path, binary_path: &Path) -> Re
     let status = command
         .configure_for_background()
         .status()
-        .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїСѓСЃС‚РёС‚СЊ go build РІ {}", source_dir.display()))?;
+        .with_context(|| format!("Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р В·Р В°Р С—РЎС“РЎРѓРЎвЂљР С‘РЎвЂљРЎРЉ go build Р Р† {}", source_dir.display()))?;
 
     if !status.success() {
         return Err(anyhow!(
-            "go build Р·Р°РІРµСЂС€РёР»СЃСЏ СЃ РѕС€РёР±РєРѕР№ РїСЂРё СЃР±РѕСЂРєРµ yggstack РІ {}",
+            "go build Р В·Р В°Р Р†Р ВµРЎР‚РЎв‚¬Р С‘Р В»РЎРѓРЎРЏ РЎРѓ Р С•РЎв‚¬Р С‘Р В±Р С”Р С•Р в„– Р С—РЎР‚Р С‘ РЎРѓР В±Р С•РЎР‚Р С”Р Вµ yggstack Р Р† {}",
             source_dir.display()
         ));
     }
@@ -431,23 +433,102 @@ fn generate_config(binary_path: &Path, config_path: &Path) -> Result<()> {
     let output = command
         .configure_for_background()
         .output()
-        .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїСѓСЃС‚РёС‚СЊ {}", binary_path.display()))?;
+        .with_context(|| format!("Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р В·Р В°Р С—РЎС“РЎРѓРЎвЂљР С‘РЎвЂљРЎРЉ {}", binary_path.display()))?;
 
     if !output.status.success() {
         return Err(anyhow!(
-            "yggstack -genconf Р·Р°РІРµСЂС€РёР»СЃСЏ СЃ РѕС€РёР±РєРѕР№: {}",
+            "yggstack -genconf Р В·Р В°Р Р†Р ВµРЎР‚РЎв‚¬Р С‘Р В»РЎРѓРЎРЏ РЎРѓ Р С•РЎв‚¬Р С‘Р В±Р С”Р С•Р в„–: {}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
 
     fs::write(config_path, output.stdout).with_context(|| {
         format!(
-            "РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїРёСЃР°С‚СЊ СЃРіРµРЅРµСЂРёСЂРѕРІР°РЅРЅС‹Р№ РєРѕРЅС„РёРі yggstack РІ {}",
+            "Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р В·Р В°Р С—Р С‘РЎРѓР В°РЎвЂљРЎРЉ РЎРѓР С–Р ВµР Р…Р ВµРЎР‚Р С‘РЎР‚Р С•Р Р†Р В°Р Р…Р Р…РЎвЂ№Р в„– Р С”Р С•Р Р…РЎвЂћР С‘Р С– yggstack Р Р† {}",
             config_path.display()
         )
     })?;
 
     Ok(())
+}
+
+fn generate_or_update_config(binary_path: &Path, config_path: &Path, peers: &[String]) -> Result<()> {
+    let mut config_value = if config_path.exists() {
+        let raw = fs::read_to_string(config_path).with_context(|| {
+            format!("Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р С—РЎР‚Р С•РЎвЂЎР С‘РЎвЂљР В°РЎвЂљРЎРЉ Р С”Р С•Р Р…РЎвЂћР С‘Р С– Yggstack {}", config_path.display())
+        })?;
+        serde_json::from_str::<serde_json::Value>(&raw).unwrap_or_else(|_| json!({}))
+    } else {
+        generate_config(binary_path, config_path)?;
+        let raw = fs::read_to_string(config_path).with_context(|| {
+            format!("Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р С—РЎР‚Р С•РЎвЂЎР С‘РЎвЂљР В°РЎвЂљРЎРЉ РЎРѓР Р†Р ВµР В¶Р ВµРЎРѓР С•Р В·Р Т‘Р В°Р Р…Р Р…РЎвЂ№Р в„– Р С”Р С•Р Р…РЎвЂћР С‘Р С– Yggstack {}", config_path.display())
+        })?;
+        serde_json::from_str::<serde_json::Value>(&raw).unwrap_or_else(|_| json!({}))
+    };
+
+    if !config_value.is_object() {
+        config_value = json!({});
+    }
+
+    let object = config_value
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("yggstack config root must be an object"))?;
+    object.insert("Peers".into(), json!(peers));
+    object.insert("AdminListen".into(), json!("none"));
+    if !object.contains_key("MulticastInterfaces") {
+        object.insert(
+            "MulticastInterfaces".into(),
+            json!([{
+                "Regex": ".*",
+                "Beacon": true,
+                "Listen": true,
+                "Password": ""
+            }]),
+        );
+    }
+
+    let normalized = serde_json::to_string_pretty(&config_value)
+        .context("Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ РЎРѓР ВµРЎР‚Р С‘Р В°Р В»Р С‘Р В·Р С•Р Р†Р В°РЎвЂљРЎРЉ Yggstack config")?;
+    fs::write(config_path, normalized).with_context(|| {
+        format!(
+            "Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р В·Р В°Р С—Р С‘РЎРѓР В°РЎвЂљРЎРЉ Р Р…Р С•РЎР‚Р СР В°Р В»Р С‘Р В·Р С•Р Р†Р В°Р Р…Р Р…РЎвЂ№Р в„– Р С”Р С•Р Р…РЎвЂћР С‘Р С– Yggstack Р Р† {}",
+            config_path.display()
+        )
+    })?;
+
+    Ok(())
+}
+
+fn query_sidecar_value(binary_path: &Path, config_path: &Path, flag: &str) -> Result<String> {
+    let mut command = Command::new(binary_path);
+    command.arg("-useconffile").arg(config_path).arg(flag);
+
+    let output = command
+        .configure_for_background()
+        .output()
+        .with_context(|| format!("Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ Р В·Р В°Р С—РЎС“РЎРѓРЎвЂљР С‘РЎвЂљРЎРЉ {} {}", binary_path.display(), flag))?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "yggstack {flag} Р В·Р В°Р Р†Р ВµРЎР‚РЎв‚¬Р С‘Р В»РЎРѓРЎРЏ РЎРѓ Р С•РЎв‚¬Р С‘Р В±Р С”Р С•Р в„–: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn normalize_ygg_address(value: &str) -> Option<String> {
+    let trimmed = value.trim().trim_matches('[').trim_matches(']');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.parse::<std::net::Ipv6Addr>().is_ok() {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
 }
 
 fn default_runtime_dir() -> PathBuf {
@@ -458,6 +539,79 @@ fn default_runtime_dir() -> PathBuf {
 }
 
 impl YggstackManager {
+    async fn ensure_sidecar_config_ready(&self) -> Result<()> {
+        let binary_path = self.config.binary_path.clone();
+        let config_path = self.config.config_path.clone();
+        let bootstrap = fetch_bootstrap_peers().await.unwrap_or_else(|error| BootstrapPeers {
+            peers: YGG_FALLBACK_PEERS.iter().map(|peer| (*peer).to_string()).collect(),
+            source: format!("built-in fallback ({error:#})"),
+        });
+
+        task::spawn_blocking(move || {
+            generate_or_update_config(&binary_path, &config_path, &bootstrap.peers)
+        })
+        .await
+        .context("Р В РЎвЂ“Р В Р’ВµР В Р вЂ¦Р В Р’ВµР РЋР вЂљР В Р’В°Р РЋРІР‚В Р В РЎвЂР РЋР РЏ Р В РЎвЂќР В РЎвЂўР В Р вЂ¦Р РЋРІР‚С›Р В РЎвЂР В РЎвЂ“Р В Р’В° yggstack task panicked")??;
+
+        Ok(())
+    }
+
+    async fn start_sidecar_with_args(&self, extra_args: &[&str]) -> Result<YggstackRuntimeInfo> {
+        self.prepare_runtime().await?;
+        self.stop_running_sidecar()?;
+
+        self.ensure_runtime_dir()?;
+        let log_file = File::options()
+            .create(true)
+            .append(true)
+            .open(&self.config.log_path)
+            .with_context(|| format!("Р В Р вЂ¦Р В Р’Вµ Р РЋРЎвЂњР В РўвЂР В Р’В°Р В Р’В»Р В РЎвЂўР РЋР С“Р РЋР Р‰ Р В РЎвЂўР РЋРІР‚С™Р В РЎвЂќР РЋР вЂљР РЋРІР‚в„–Р РЋРІР‚С™Р РЋР Р‰ Р В Р’В»Р В РЎвЂўР В РЎвЂ“ {}", self.config.log_path.display()))?;
+        let err_file = log_file
+            .try_clone()
+            .context("Р В Р вЂ¦Р В Р’Вµ Р РЋРЎвЂњР В РўвЂР В Р’В°Р В Р’В»Р В РЎвЂўР РЋР С“Р РЋР Р‰ Р В РЎвЂќР В Р’В»Р В РЎвЂўР В Р вЂ¦Р В РЎвЂР РЋР вЂљР В РЎвЂўР В Р вЂ Р В Р’В°Р РЋРІР‚С™Р РЋР Р‰ Р РЋРІР‚С›Р В Р’В°Р В РІвЂћвЂ“Р В Р’В»Р В РЎвЂўР В Р вЂ Р РЋРІР‚в„–Р В РІвЂћвЂ“ Р В РўвЂР В Р’ВµР РЋР С“Р В РЎвЂќР РЋР вЂљР В РЎвЂР В РЎвЂ”Р РЋРІР‚С™Р В РЎвЂўР РЋР вЂљ Р В Р’В»Р В РЎвЂўР В РЎвЂ“Р В Р’В° yggstack")?;
+
+        let mut command = Command::new(&self.config.binary_path);
+        command
+            .arg("-useconffile")
+            .arg(&self.config.config_path)
+            .arg("-logto")
+            .arg(&self.config.log_path)
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(err_file));
+        for arg in extra_args {
+            command.arg(arg);
+        }
+        let child = command
+            .configure_for_background()
+            .spawn()
+            .with_context(|| {
+                format!(
+                    "Р В Р вЂ¦Р В Р’Вµ Р РЋРЎвЂњР В РўвЂР В Р’В°Р В Р’В»Р В РЎвЂўР РЋР С“Р РЋР Р‰ Р В Р’В·Р В Р’В°Р В РЎвЂ”Р РЋРЎвЂњР РЋР С“Р РЋРІР‚С™Р В РЎвЂР РЋРІР‚С™Р РЋР Р‰ yggstack Р В РЎвЂР В Р’В· {}",
+                    self.config.binary_path.display()
+                )
+            })?;
+
+        *self
+            .process
+            .lock()
+            .map_err(|_| anyhow!("mutex yggstack process poisoned"))? = Some(ManagedProcess { child });
+
+        Ok(self.sidecar_runtime_info())
+    }
+
+    fn stop_running_sidecar(&self) -> Result<()> {
+        if let Some(mut process) = self
+            .process
+            .lock()
+            .map_err(|_| anyhow!("mutex yggstack process poisoned"))?
+            .take()
+        {
+            let _ = process.child.kill();
+            let _ = process.child.wait();
+        }
+        Ok(())
+    }
+
     async fn build_embedded_config(&self) -> Result<(String, usize, String)> {
         self.ensure_runtime_dir()?;
 
@@ -472,7 +626,7 @@ impl YggstackManager {
         let mut config_value = if self.config.config_path.exists() {
             let raw = fs::read_to_string(&self.config.config_path).with_context(|| {
                 format!(
-                    "не удалось прочитать конфиг Yggstack {}",
+                    "РЅРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕС‡РёС‚Р°С‚СЊ РєРѕРЅС„РёРі Yggstack {}",
                     self.config.config_path.display()
                 )
             })?;
@@ -503,10 +657,10 @@ impl YggstackManager {
         }
 
         let config_json = serde_json::to_string_pretty(&config_value)
-            .context("не удалось сериализовать embedded Yggstack config")?;
+            .context("РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРµСЂРёР°Р»РёР·РѕРІР°С‚СЊ embedded Yggstack config")?;
         fs::write(&self.config.config_path, &config_json).with_context(|| {
             format!(
-                "не удалось записать embedded-конфиг Yggstack в {}",
+                "РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїРёСЃР°С‚СЊ embedded-РєРѕРЅС„РёРі Yggstack РІ {}",
                 self.config.config_path.display()
             )
         })?;
@@ -525,7 +679,7 @@ async fn fetch_bootstrap_peers() -> Result<BootstrapPeers> {
     let client = reqwest::Client::builder()
         .use_rustls_tls()
         .build()
-        .context("не удалось создать HTTP-клиент для Ygg bootstrap")?;
+        .context("РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ HTTP-РєР»РёРµРЅС‚ РґР»СЏ Ygg bootstrap")?;
 
     let mut last_error = None;
     for feed in YGG_PUBLIC_PEER_FEEDS {
@@ -557,12 +711,12 @@ async fn fetch_bootstrap_peers_from_feed(
         .header(reqwest::header::USER_AGENT, "minecraft-p2p-connector/0.3.10")
         .send()
         .await
-        .with_context(|| format!("не удалось запросить Ygg public peer feed {feed_url}"))?
+        .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїСЂРѕСЃРёС‚СЊ Ygg public peer feed {feed_url}"))?
         .error_for_status()
-        .with_context(|| format!("Ygg public peer feed {feed_url} вернул ошибку"))?
+        .with_context(|| format!("Ygg public peer feed {feed_url} РІРµСЂРЅСѓР» РѕС€РёР±РєСѓ"))?
         .json::<HashMap<String, HashMap<String, YggPublicPeerMeta>>>()
         .await
-        .with_context(|| format!("не удалось разобрать JSON Ygg public peer feed {feed_url}"))?;
+        .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ СЂР°Р·РѕР±СЂР°С‚СЊ JSON Ygg public peer feed {feed_url}"))?;
 
     let mut ranked = Vec::new();
     for peers in payload.into_values() {
@@ -658,13 +812,13 @@ fn copy_bundled_binary(source: &Path, target: &Path) -> Result<()> {
 
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).with_context(|| {
-            format!("РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ РєР°С‚Р°Р»РѕРі РґР»СЏ yggstack {}", parent.display())
+            format!("Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ РЎРѓР С•Р В·Р Т‘Р В°РЎвЂљРЎРЉ Р С”Р В°РЎвЂљР В°Р В»Р С•Р С– Р Т‘Р В»РЎРЏ yggstack {}", parent.display())
         })?;
     }
 
     fs::copy(source, target).with_context(|| {
         format!(
-            "РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРєРѕРїРёСЂРѕРІР°С‚СЊ bundled yggstack РёР· {} РІ {}",
+            "Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ РЎРѓР С”Р С•Р С—Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ bundled yggstack Р С‘Р В· {} Р Р† {}",
             source.display(),
             target.display()
         )
