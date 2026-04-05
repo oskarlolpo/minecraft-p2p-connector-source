@@ -65,6 +65,7 @@ const pageHomeEl = document.querySelector("#page-home");
 const pageSettingsEl = document.querySelector("#page-settings");
 const portHelpEl = document.querySelector("#port-help");
 const hideOverlayButtonEl = document.querySelector("#hide-overlay-button");
+const overlayCloseButtonEl = document.querySelector("#overlay-close-button");
 const overlayTopbarEl = document.querySelector("#overlay-topbar");
 const openProfileModalEl = document.querySelector("#open-profile-modal");
 const overlayShortcutChipEl = document.querySelector("#overlay-shortcut-chip");
@@ -633,7 +634,7 @@ function formatMode(mode) {
 }
 
 function formatTransportLabel(transport) {
-  if (transport === "cloudflare-webrtc") return "Cloudflare TURN/WebRTC";
+  if (transport === "cloudflare-webrtc") return "TURN/WebRTC";
   if (transport === "ably-relay") return "Ably MQTT relay";
   if (transport === "relay-circuit" || transport === "relay-reservation") return "Circuit Relay v2";
   if (transport === "direct-hole-punch") return "DCUtR hole punch";
@@ -1121,7 +1122,7 @@ async function bindChannelHandlers() {
       if (!sessionId || !offerJson) return;
 
       try {
-        addLog(`Cloudflare offer получен от ${requester}.`);
+        addLog(`TURN/WebRTC offer получен от ${requester}.`);
         const answerJson = await invoke("cloudflare_accept_offer", {
           sessionId,
           offerJson,
@@ -1133,9 +1134,9 @@ async function bindChannelHandlers() {
           answer_json: answerJson,
           peer_addr: hostSession.peerAddr,
         });
-        addLog(`Cloudflare answer отправлен клиенту ${requester}.`);
+        addLog(`TURN/WebRTC answer отправлен клиенту ${requester}.`);
       } catch (error) {
-        addLog(`Cloudflare host answer failed: ${String(error)}`);
+        addLog(`TURN/WebRTC host answer failed: ${String(error)}`);
       }
     });
 
@@ -1145,10 +1146,10 @@ async function bindChannelHandlers() {
       if (!sessionId || !answerJson) return;
 
       try {
-        addLog("Cloudflare answer получен от хоста.");
+        addLog("TURN/WebRTC answer получен от хоста.");
         await invoke("cloudflare_finish_client_answer", { sessionId, answerJson });
       } catch (error) {
-        addLog(`Cloudflare client answer apply failed: ${String(error)}`);
+        addLog(`TURN/WebRTC client answer apply failed: ${String(error)}`);
         if (state.pendingTransportFlow) {
           await startRelayFallback(state.pendingTransportFlow);
         }
@@ -1355,7 +1356,7 @@ function renderYggstackRuntime(info) {
   state.yggstackInfo = info ?? null;
   if (!yggstackStatusEl) return;
   if (!info) {
-    yggstackStatusEl.textContent = "Yggstack: встроенный runtime ещё не проверен.";
+    yggstackStatusEl.textContent = "Yggstack: runtime ещё не проверен.";
     return;
   }
 
@@ -1398,9 +1399,9 @@ async function retryYggstackPeersAction() {
   try {
     const info = await invoke("retry_yggstack_peers");
     renderYggstackRuntime(info);
-    addLog("Yggstack: инициирован повторный peer-discovery.");
+    addLog("Yggstack: запущено повторное обновление peer-узлов.");
   } catch (error) {
-    addLog(`Не удалось обновить peer'ы Yggstack: ${String(error)}`);
+    addLog(`Не удалось обновить peer-узлы Yggstack: ${String(error)}`);
   }
 }
 
@@ -1423,7 +1424,15 @@ async function ensureYggstackReady({ autoStart = false, silent = false } = {}) {
     let info = await invoke("get_yggstack_runtime_info");
     renderYggstackRuntime(info);
 
-    if (autoStart && info.ready && !info.running) {
+    if (!info?.ready) {
+      info = await invoke("prepare_yggstack_runtime");
+      renderYggstackRuntime(info);
+      if (!silent) {
+        addLog(`Yggstack подготовлен. Источник: ${info.binaryPath ?? "embedded"}.`);
+      }
+    }
+
+    if (autoStart && info?.ready && !info.running) {
       info = await invoke("start_yggstack_sidecar");
       renderYggstackRuntime(info);
       if (!silent) {
@@ -1437,7 +1446,7 @@ async function ensureYggstackReady({ autoStart = false, silent = false } = {}) {
 
     return info;
   } catch (error) {
-    if (!silent) addLog(`Не удалось проверить Yggstack runtime: ${String(error)}`);
+    if (!silent) addLog(`Не удалось подготовить Yggstack runtime: ${String(error)}`);
     return null;
   }
 }
@@ -1564,40 +1573,10 @@ async function stopSession() {
   }
 }
 
-async function startCloudflareFallback(flow) {
-  if (!flow || flow.cloudflareAttempted) return;
-  flow.cloudflareAttempted = true;
-  addLog("Direct path не поднялся. Перехожу на Cloudflare TURN/WebRTC.");
-
-  try {
-    const runtime = await invoke("get_cloudflare_runtime_info");
-    if (!runtime.ready) {
-      addLog(`Cloudflare runtime недоступен: ${runtime.note}`);
-      await startRelayFallback(flow);
-      return;
-    }
-
-    const offerJson = await invoke("cloudflare_create_offer", {
-      sessionId: flow.cloudflareSessionId,
-      peerAddr: flow.server.peerAddr,
-    });
-    await state.realtime.channels.get(`lobby:${flow.server.clientId}`).publish("cloudflare-offer", {
-      client_id: localClientId,
-      session_id: flow.cloudflareSessionId,
-      peer_addr: flow.server.peerAddr,
-      offer_json: offerJson,
-    });
-    addLog(`Cloudflare offer отправлен хосту ${flow.server.clientId}.`);
-  } catch (error) {
-    addLog(`Cloudflare fallback failed before answer: ${String(error)}`);
-    await startRelayFallback(flow);
-  }
-}
-
 async function startRelayFallback(flow) {
   if (!flow || flow.relayAttempted) return;
   flow.relayAttempted = true;
-  addLog(`Cloudflare не помог. Перехожу на MQTT relay session ${flow.relaySessionId}.`);
+  addLog(`Yggstack не поднялся. Перехожу на MQTT relay session ${flow.relaySessionId}.`);
   try {
     await invoke("start_relay_fallback", {
       peerId: flow.server.peerId,
@@ -1675,17 +1654,10 @@ async function connectToServer(server) {
   try {
     await ensureYggstackReady({ autoStart: true, silent: true });
     addLog(t("connectProgress", { room: server.roomName, addr: server.peerAddr }));
-    const cloudflarePreferred = Boolean(server.cloudflareEnabled && server.cloudflareTurnReady);
-    if (server.cloudflareEnabled) {
-      addLog(
-        `Хост ${server.roomName} помечен как Cloudflare-preferred. Сначала пробуем direct path, затем текущий fallback.`,
-      );
-    }
     if (server.yggReady && server.yggAddress) {
       addLog(`Хост ${server.roomName} публикует Ygg-адрес [${server.yggAddress}].`);
     }
-    const relaySessionId = `${server.cloudflareEnabled ? "cfrelay" : "relay"}-${crypto.randomUUID()}`;
-    const cloudflareSessionId = `cfwebrtc-${crypto.randomUUID()}`;
+    const relaySessionId = `relay-${crypto.randomUUID()}`;
     const peerAddrs = sortAdvertisedAddrs(
       [...new Set([...(server.peerAddrs ?? []), normalizeToMultiaddr(server.peerAddr)].filter(Boolean))],
     );
@@ -1713,9 +1685,7 @@ async function connectToServer(server) {
       server,
       peerAddrs,
       relaySessionId,
-      cloudflareSessionId,
       yggAttempted: false,
-      cloudflareAttempted: false,
       relayAttempted: false,
     };
     addLog(t("connectRequestSent", { host: server.clientId }));
@@ -1809,39 +1779,10 @@ await listen("connection_success", async (event) => {
   renderServers();
 });
 
-await listen("cloudflare_connecting", async () => {
-  addLog("Cloudflare TURN/WebRTC negotiation started.");
-});
-
-await listen("cloudflare_connected", async (event) => {
-  state.pendingConnects.clear();
-  state.tunnelReady = true;
-  state.activeTunnelTransport = "cloudflare-webrtc";
-  state.pendingTransportFlow = null;
-  setMinecraftHint(t("hintConnected"), true);
-  addLog(
-    `${t("tunnelEstablishedLog", { addr: "localhost:25565" })} (${formatTransportLabel("cloudflare-webrtc")})`,
-  );
-  const status = await invoke("get_status");
-  renderStatus(status);
-  renderServers();
-});
-
-await listen("cloudflare_failed", async (event) => {
-  addLog(`Cloudflare fallback failed: ${event.payload?.reason ?? "unknown error"}`);
-  if (state.pendingTransportFlow) {
-    await startRelayFallback(state.pendingTransportFlow);
-  }
-});
-
 await listen("tunnel_failed", async (event) => {
   addLog(`Tunnel failed: ${event.payload?.reason ?? "unknown"}`);
   if (state.pendingTransportFlow?.server?.yggReady && state.pendingTransportFlow?.server?.yggAddress) {
     await startYggFallback(state.pendingTransportFlow);
-    return;
-  }
-  if (state.pendingTransportFlow?.server?.cloudflareEnabled && state.pendingTransportFlow?.server?.cloudflareTurnReady) {
-    await startCloudflareFallback(state.pendingTransportFlow);
     return;
   }
   if (state.pendingTransportFlow) {
@@ -1903,6 +1844,9 @@ profileModalEl?.addEventListener("click", (event) => {
 closeProfileModalEl?.addEventListener("click", closeProfileModal);
 closeProfileModalSecondaryEl?.addEventListener("click", closeProfileModal);
 hideOverlayButtonEl?.addEventListener("click", async () => {
+  await appWindow.hide();
+});
+overlayCloseButtonEl?.addEventListener("click", async () => {
   await appWindow.hide();
 });
 overlayShortcutChipEl?.addEventListener("click", () => {

@@ -151,7 +151,7 @@ input:focus {
   border-radius: 16px;
   border: 1px solid var(--panel-border);
   background: color-mix(in srgb, var(--panel-secondary) 92%, transparent);
-  color: var(--text-soft);
+  color: color-mix(in srgb, var(--text-main) 88%, transparent);
 }
 
 .sidebar-brand,
@@ -179,13 +179,15 @@ input:focus {
 }
 
 .nav-icon {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
+  opacity: 0.92;
 }
 
 .profile-icon-svg {
   width: 22px;
   height: 22px;
+  opacity: 0.92;
 }
 
 .sidebar-brand {
@@ -212,6 +214,9 @@ input:focus {
 }
 
 .workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   overflow: hidden;
   padding: 18px 20px;
 }
@@ -295,6 +300,24 @@ input:focus {
   app-region: no-drag;
 }
 
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.window-control-button {
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.window-control-button.close {
+  color: color-mix(in srgb, var(--text-main) 92%, transparent);
+}
+
 .profile-pill {
   gap: 10px;
   min-width: 0;
@@ -364,8 +387,10 @@ input:focus {
 
 .page {
   display: none;
-  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
+  padding-right: 4px;
 }
 
 .page-active {
@@ -924,6 +949,7 @@ input:focus {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
   margin-top: 18px;
+  padding-bottom: 28px;
 }
 
 .profile-settings-grid {

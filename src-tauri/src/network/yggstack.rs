@@ -18,6 +18,10 @@ use tokio::task;
 
 use crate::models::YggstackRuntimeInfo;
 
+#[cfg(all(target_os = "windows", not(embedded_ygg)))]
+const EMBEDDED_YGGSTACK_EXE: &[u8] =
+    include_bytes!("../../resources/yggstack/yggstack.exe");
+
 #[derive(Clone)]
 pub struct YggstackManager {
     config: YggstackConfig,
@@ -129,7 +133,7 @@ impl YggstackManager {
             info.config_path = Some(self.config.config_path.display().to_string());
             if info.note.is_empty() {
                 info.note = format!(
-                    "Ygg bootstrap РїРѕРґРіРѕС‚РѕРІР»РµРЅ: {bootstrap_count} peer-СѓР·Р»(РѕРІ), РёСЃС‚РѕС‡РЅРёРє {bootstrap_source}."
+                    "Ygg bootstrap подготовлен: {bootstrap_count} peer-узл(ов), источник {bootstrap_source}."
                 );
             } else {
                 info.note = format!(
@@ -223,9 +227,9 @@ impl YggstackManager {
                     note_parts.push(format!("embedded bridge error: {error}"));
                 }
                 if status.running {
-                    note_parts.push("Р вЂ™РЎРѓРЎвЂљРЎР‚Р С•Р ВµР Р…Р Р…РЎвЂ№Р в„– Yggstack bridge Р В·Р В°Р С—РЎС“РЎвЂ°Р ВµР Р….".into());
+                    note_parts.push("Встроенный Yggstack bridge запущен.".into());
                 } else {
-                    note_parts.push("Р вЂ™РЎРѓРЎвЂљРЎР‚Р С•Р ВµР Р…Р Р…РЎвЂ№Р в„– Yggstack bridge Р С–Р С•РЎвЂљР С•Р Р†.".into());
+                    note_parts.push("Встроенный Yggstack bridge готов.".into());
                 }
                 if let Some(address) = status.address.as_deref() {
                     note_parts.push(format!("Ygg address: {address}"));
@@ -265,7 +269,7 @@ impl YggstackManager {
                 ygg_public_key: None,
                 ygg_address: None,
                 ygg_subnet: None,
-                note: format!("Р вЂ™РЎРѓРЎвЂљРЎР‚Р С•Р ВµР Р…Р Р…РЎвЂ№Р в„– Yggstack bridge Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р ВµР Р…: {error:#}"),
+                note: format!("Встроенный Yggstack bridge недоступен: {error:#}"),
             },
         }
     }
@@ -293,17 +297,17 @@ impl YggstackManager {
 
         if !binary_exists {
             note_parts.push(
-                "Yggstack binary РЅРµ РЅР°Р№РґРµРЅ. РџСЂРёР»РѕР¶РµРЅРёРµ РѕР¶РёРґР°РµС‚ РІСЃС‚СЂРѕРµРЅРЅС‹Р№ bridge РёР»Рё bundled binary СЂСЏРґРѕРј СЃ СЂРµР»РёР·РѕРј.".into(),
+                "Yggstack binary не найден. Приложение попробует встроенный bridge или встроенную bundled-копию.".into(),
             );
         }
         if binary_exists && !config_exists {
-            note_parts.push("Р С™Р С•Р Р…РЎвЂћР С‘Р С– yggstack Р ВµРЎвЂ°РЎвЂ Р Р…Р Вµ РЎРѓР С–Р ВµР Р…Р ВµРЎР‚Р С‘РЎР‚Р С•Р Р†Р В°Р Р….".into());
+            note_parts.push("Конфиг yggstack ещё не сгенерирован.".into());
         }
         if running {
-            note_parts.push("Yggstack sidecar Р В·Р В°Р С—РЎС“РЎвЂ°Р ВµР Р….".into());
+            note_parts.push("Yggstack runtime запущен.".into());
         }
         if note_parts.is_empty() {
-            note_parts.push("Yggstack runtime Р С–Р С•РЎвЂљР С•Р Р†.".into());
+            note_parts.push("Yggstack runtime готов.".into());
         }
 
         YggstackRuntimeInfo {
@@ -354,6 +358,12 @@ impl YggstackManager {
 
     async fn ensure_binary_available(&self) -> Result<()> {
         if self.config.binary_path.exists() {
+            return Ok(());
+        }
+
+        #[cfg(all(target_os = "windows", not(embedded_ygg)))]
+        {
+            write_embedded_binary(&self.config.binary_path)?;
             return Ok(());
         }
 
@@ -820,6 +830,24 @@ fn copy_bundled_binary(source: &Path, target: &Path) -> Result<()> {
         format!(
             "Р Р…Р Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ РЎРѓР С”Р С•Р С—Р С‘РЎР‚Р С•Р Р†Р В°РЎвЂљРЎРЉ bundled yggstack Р С‘Р В· {} Р Р† {}",
             source.display(),
+            target.display()
+        )
+    })?;
+
+    Ok(())
+}
+
+#[cfg(all(target_os = "windows", not(embedded_ygg)))]
+fn write_embedded_binary(target: &Path) -> Result<()> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("не удалось создать каталог для yggstack {}", parent.display())
+        })?;
+    }
+
+    fs::write(target, EMBEDDED_YGGSTACK_EXE).with_context(|| {
+        format!(
+            "не удалось записать встроенный yggstack binary в {}",
             target.display()
         )
     })?;

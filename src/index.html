@@ -44,7 +44,10 @@
               <span id="topbar-profile-name">Р›РѕРєР°Р»СЊРЅС‹Р№ РёРіСЂРѕРє</span>
             </button>
             <div id="overlay-shortcut-chip" class="shortcut-chip" role="button" tabindex="0" title="РќР°Р¶РјРёС‚Рµ, С‡С‚РѕР±С‹ СЃРјРµРЅРёС‚СЊ РіРѕСЂСЏС‡СѓСЋ РєР»Р°РІРёС€Сѓ">SHIFT+TAB</div>
-            <button id="hide-overlay-button" class="secondary-button compact" type="button">РЎРєСЂС‹С‚СЊ</button>
+            <div class="window-controls" data-no-drag>
+              <button id="hide-overlay-button" class="secondary-button compact window-control-button" type="button">−</button>
+              <button id="overlay-close-button" class="secondary-button compact window-control-button close" type="button">×</button>
+            </div>
           </div>
         </header>
 
@@ -223,10 +226,10 @@
                   Yggstack: runtime РµС‰С‘ РЅРµ РїРѕРґРіРѕС‚РѕРІР»РµРЅ.
                 </div>
                 <div class="selected-actions" style="margin-bottom: 14px;">
-                  <button id="prepare-yggstack" class="secondary-button" type="button">РџСЂРѕРІРµСЂРёС‚СЊ Yggstack</button>
-                  <button id="start-yggstack" class="secondary-button" type="button">Р—Р°РїСѓСЃС‚РёС‚СЊ Yggstack</button>
-                  <button id="retry-yggstack" class="secondary-button" type="button">РћР±РЅРѕРІРёС‚СЊ peer'С‹</button>
-                  <button id="stop-yggstack" class="secondary-button" type="button">РћСЃС‚Р°РЅРѕРІРёС‚СЊ Yggstack</button>
+                  <button id="prepare-yggstack" class="secondary-button" type="button">Проверить Yggstack</button>
+                  <button id="start-yggstack" class="secondary-button" type="button">Запустить Yggstack</button>
+                  <button id="retry-yggstack" class="secondary-button" type="button">Обновить peer-узлы</button>
+                  <button id="stop-yggstack" class="secondary-button" type="button">Остановить Yggstack</button>
                 </div>
                 <div class="selected-actions" style="margin-bottom: 14px;">
                   <button id="copy-diagnostics" class="secondary-button" type="button">Copy Diagnostics JSON</button>
