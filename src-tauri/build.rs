@@ -294,6 +294,9 @@ fn resolve_prebuilt_bridge_dir() -> Option<PathBuf> {
 }
 
 fn emit_embedded_bridge_linking(dir: &Path) {
+    #[cfg(target_os = "windows")]
+    ensure_windows_import_lib(dir);
+
     println!("cargo:rustc-cfg=embedded_ygg");
     println!("cargo:rustc-link-search=native={}", dir.display());
     println!("cargo:rustc-link-lib=static=yggstackbridge");
@@ -303,6 +306,29 @@ fn emit_embedded_bridge_linking(dir: &Path) {
     }
     for native_lib in ["ws2_32", "iphlpapi", "bcrypt", "userenv", "crypt32", "advapi32", "ntdll"] {
         println!("cargo:rustc-link-lib={native_lib}");
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_windows_import_lib(dir: &Path) {
+    let archive = dir.join("yggstackbridge.a");
+    let import_lib = dir.join("yggstackbridge.lib");
+    if import_lib.exists() || !archive.exists() {
+        return;
+    }
+
+    match fs::copy(&archive, &import_lib) {
+        Ok(_) => println!(
+            "cargo:warning=created Windows import library alias {} from {}",
+            import_lib.display(),
+            archive.display()
+        ),
+        Err(error) => println!(
+            "cargo:warning=failed to create Windows import library alias {} from {}: {}",
+            import_lib.display(),
+            archive.display(),
+            error
+        ),
     }
 }
 
