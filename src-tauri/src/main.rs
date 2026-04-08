@@ -8,15 +8,15 @@ mod models;
 mod network;
 mod signaling;
 
-use network::minecraft::{build_preflight_report, detect_lan_port_from_logs};
+use network::minecraft::{build_preflight_report, detect_lan_port_from_logs, probe_external_server};
 use network::manager::NetworkManager;
 use network::geyser::GeyserManager;
 use network::test_server::{probe_test_server, TestServerManager};
 use models::{
-    DiagnosticSnapshot, LanPortDetection, NetworkStatus, PreflightReport, SwarmBootstrap,
-    TestServerInfo,
+    AppInfo, DiagnosticSnapshot, ExternalServerProbe, InstallUpdateResult, LanPortDetection,
+    NetworkStatus, PreflightReport, SwarmBootstrap, TestServerInfo, UpdateCheckResult,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, State};
 use tokio::sync::Mutex;
 
@@ -170,6 +170,35 @@ async fn detect_lan_port() -> Result<LanPortDetection, String> {
 }
 
 #[tauri::command]
+async fn query_external_server(host: String, port: u16) -> Result<ExternalServerProbe, String> {
+    probe_external_server(host, port)
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+async fn get_app_info() -> Result<AppInfo, String> {
+    Ok(AppInfo {
+        version: env!("CARGO_PKG_VERSION").into(),
+        product_name: "Minecraft P2P Connector".into(),
+    })
+}
+
+#[tauri::command]
+async fn check_for_updates() -> Result<UpdateCheckResult, String> {
+    check_for_updates_impl()
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+async fn install_update() -> Result<InstallUpdateResult, String> {
+    install_update_impl()
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
 async fn run_preflight_and_store(
     state: State<'_, AppState>,
     local_port: u16,
@@ -238,6 +267,88 @@ async fn export_diagnostics_snapshot(
     })
 }
 
+async fn check_for_updates_impl() -> anyhow::Result<UpdateCheckResult> {
+    let client = reqwest::Client::builder()
+        .user_agent("minecraft-p2p-connector")
+        .build()?;
+    let response = client
+        .get("https://api.github.com/repos/oskarlolpo/minecraft-p2p-connector/releases/latest")
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let value: serde_json::Value = response.json().await?;
+    let tag_name = value
+        .get("tag_name")
+        .and_then(|item| item.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let latest_version = tag_name.trim_start_matches('v').to_string();
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let release_url = value.get("html_url").and_then(|item| item.as_str()).map(str::to_string);
+    let download_url = value
+        .get("assets")
+        .and_then(|item| item.as_array())
+        .and_then(|assets| {
+            assets.iter().find_map(|asset| {
+                let name = asset.get("name")?.as_str()?;
+                if name.ends_with("_x64-setup.exe") {
+                    asset
+                        .get("browser_download_url")
+                        .and_then(|item| item.as_str())
+                        .map(str::to_string)
+                } else {
+                    None
+                }
+            })
+        });
+
+    Ok(UpdateCheckResult {
+        current_version: current_version.clone(),
+        latest_version: (!latest_version.is_empty()).then_some(latest_version.clone()),
+        available: !latest_version.is_empty() && latest_version != current_version,
+        release_url,
+        download_url,
+    })
+}
+
+async fn install_update_impl() -> anyhow::Result<InstallUpdateResult> {
+    let update = check_for_updates_impl().await?;
+    if !update.available {
+        return Ok(InstallUpdateResult {
+            message: "Обновлений нет.".into(),
+        });
+    }
+
+    let download_url = update
+        .download_url
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("release asset not found"))?;
+    let temp_path = std::env::temp_dir().join(format!(
+        "Minecraft.P2P.Connector_{}_setup.exe",
+        update.latest_version.clone().unwrap_or_else(|| "latest".into())
+    ));
+
+    let client = reqwest::Client::builder()
+        .user_agent("minecraft-p2p-connector")
+        .build()?;
+    let bytes = client
+        .get(download_url.clone())
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
+    tokio::fs::write(&temp_path, &bytes).await?;
+
+    launch_file_detached(&temp_path)?;
+
+    Ok(InstallUpdateResult {
+        message: format!("Установщик загружен и запущен: {}", temp_path.display()),
+    })
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -261,6 +372,10 @@ fn main() {
             get_status,
             run_preflight,
             detect_lan_port,
+            query_external_server,
+            get_app_info,
+            check_for_updates,
+            install_update,
             run_preflight_and_store,
             start_test_server,
             stop_test_server,
@@ -306,5 +421,20 @@ fn derive_bedrock_public_endpoint(public_addr: &str, bedrock_port: u16) -> Optio
         std::net::IpAddr::V4(ip) => format!("{ip}:{bedrock_port}"),
         std::net::IpAddr::V6(ip) => format!("[{ip}]:{bedrock_port}"),
     })
+}
+
+fn launch_file_detached(path: &PathBuf) -> anyhow::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        Command::new("cmd")
+            .args(["/C", "start", "", &path.display().to_string()])
+            .creation_flags(0x0800_0000)
+            .spawn()?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err(anyhow::anyhow!("update installation is only supported on Windows"))
 }
 

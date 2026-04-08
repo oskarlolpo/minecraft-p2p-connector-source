@@ -336,7 +336,7 @@ advanced:
     haproxy-protocol-whitelisted-ips: []
     use-waterdogpe-forwarding: false
     mtu: 1400
-    validate-bedrock-login: true
+  validate-bedrock-login: false
 enable-metrics: false
 debug-mode: false
 config-version: 5

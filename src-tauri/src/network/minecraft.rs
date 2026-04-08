@@ -11,13 +11,15 @@ use tokio::{
     time::{timeout, Duration},
 };
 
-use crate::models::{LanPortDetection, LocalTargetState, PreflightReport};
+use crate::models::{ExternalServerProbe, LanPortDetection, LocalTargetState, PreflightReport};
 
 const STATUS_PROTOCOL_CANDIDATES: &[i32] = &[767, 764, 760, 47];
 
 #[derive(Debug, Deserialize)]
 struct StatusResponse {
     version: MinecraftVersion,
+    players: Option<MinecraftPlayers>,
+    description: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,16 +27,46 @@ struct MinecraftVersion {
     name: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct MinecraftPlayers {
+    online: u32,
+    max: u32,
+}
+
 pub async fn detect_local_version(port: u16) -> Result<String> {
     let mut last_error = None;
     for protocol_version in STATUS_PROTOCOL_CANDIDATES {
-        match query_status(port, *protocol_version).await {
-            Ok(version) => return Ok(version),
+        match query_status("127.0.0.1", port, *protocol_version).await {
+            Ok(response) => return Ok(response.version.name),
             Err(error) => last_error = Some(error),
         }
     }
 
     Err(last_error.unwrap_or_else(|| anyhow!("failed to get a valid Minecraft status response")))
+}
+
+pub async fn probe_external_server(host: String, port: u16) -> Result<ExternalServerProbe> {
+    let start = std::time::Instant::now();
+    let mut last_error = None;
+    for protocol_version in STATUS_PROTOCOL_CANDIDATES {
+        match query_status(&host, port, *protocol_version).await {
+            Ok(response) => {
+                let players = response.players.unwrap_or(MinecraftPlayers { online: 0, max: 0 });
+                return Ok(ExternalServerProbe {
+                    room_name: status_description_to_string(&response.description)
+                        .unwrap_or_else(|| host.clone()),
+                    host_name: host.clone(),
+                    version: Some(response.version.name),
+                    online_players: players.online,
+                    max_players: players.max,
+                    ping_ms: Some(start.elapsed().as_millis() as u64),
+                });
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow!("failed to query external server status")))
 }
 
 pub async fn build_preflight_report(port: u16) -> PreflightReport {
@@ -79,14 +111,14 @@ pub async fn detect_lan_port_from_logs() -> Result<LanPortDetection> {
         .context("failed to await Minecraft LAN port detector task")?
 }
 
-async fn query_status(port: u16, protocol_version: i32) -> Result<String> {
-    let target = format!("127.0.0.1:{port}");
+async fn query_status(host: &str, port: u16, protocol_version: i32) -> Result<StatusResponse> {
+    let target = format!("{host}:{port}");
     let mut stream = timeout(Duration::from_secs(2), TcpStream::connect(&target))
         .await
         .context("timed out while connecting to the local Minecraft target")?
         .with_context(|| format!("failed to connect to {target}"))?;
 
-    let handshake = build_handshake_packet("127.0.0.1", port, protocol_version)?;
+    let handshake = build_handshake_packet(host, port, protocol_version)?;
     stream.write_all(&handshake).await?;
     stream.write_all(&[0x01, 0x00]).await?;
     stream.flush().await?;
@@ -107,7 +139,7 @@ async fn query_status(port: u16, protocol_version: i32) -> Result<String> {
 
     let response: StatusResponse =
         serde_json::from_slice(&payload).context("failed to parse Minecraft status JSON")?;
-    Ok(response.version.name)
+    Ok(response)
 }
 
 async fn probe_local_tcp(port: u16) -> Result<()> {
@@ -144,8 +176,10 @@ fn collect_log_candidates() -> Result<Vec<PathBuf>> {
     if let Some(app_data) = std::env::var_os("APPDATA") {
         let app_data = PathBuf::from(app_data);
         roots.push(app_data.join(".minecraft").join("logs"));
+        roots.push(app_data.join(".minecraft"));
         roots.push(app_data.join("PrismLauncher").join("instances"));
         roots.push(app_data.join("MultiMC").join("instances"));
+        roots.push(app_data.join(".feather").join("logs"));
     }
 
     if let Some(user_profile) = std::env::var_os("USERPROFILE") {
@@ -156,6 +190,7 @@ fn collect_log_candidates() -> Result<Vec<PathBuf>> {
                 .join("minecraft")
                 .join("Instances"),
         );
+        roots.push(user_profile.join("AppData").join("Roaming").join(".minecraft").join("logs"));
     }
 
     let mut candidates = Vec::new();
@@ -173,15 +208,15 @@ fn collect_log_candidates() -> Result<Vec<PathBuf>> {
 }
 
 fn push_candidate_logs(root: &Path, depth: usize, out: &mut Vec<PathBuf>) {
-    if depth > 4 || !root.exists() {
+    if depth > 6 || !root.exists() {
         return;
     }
 
     if root.is_file() {
         if root
-            .file_name()
+            .extension()
             .and_then(|value| value.to_str())
-            .map(|value| value.eq_ignore_ascii_case("latest.log"))
+            .map(|value| value.eq_ignore_ascii_case("log"))
             .unwrap_or(false)
         {
             out.push(root.to_path_buf());
@@ -236,17 +271,51 @@ fn parse_lan_port_from_contents(path: &Path, contents: &str) -> Option<LanPortDe
 }
 
 fn extract_port_from_line(line: &str) -> Option<u16> {
-    let marker = "Started serving on ";
-    let index = line.find(marker)?;
-    let port_part = &line[index + marker.len()..];
-    let digits = port_part
-        .chars()
-        .take_while(|value| value.is_ascii_digit())
-        .collect::<String>();
-    if digits.is_empty() {
-        return None;
+    for marker in [
+        "Started serving on ",
+        "Started serving on port ",
+        "Local game hosted on port ",
+        "Local server started on port ",
+    ] {
+        if let Some(index) = line.find(marker) {
+            let port_part = &line[index + marker.len()..];
+            let digits = port_part
+                .chars()
+                .take_while(|value| value.is_ascii_digit())
+                .collect::<String>();
+            if let Ok(port) = digits.parse() {
+                return Some(port);
+            }
+        }
     }
-    digits.parse().ok()
+    None
+}
+
+fn status_description_to_string(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) => Some(text.trim().to_string()),
+        serde_json::Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(|value| value.as_str()) {
+                if !text.trim().is_empty() {
+                    return Some(text.trim().to_string());
+                }
+            }
+            if let Some(extra) = map.get("extra").and_then(|value| value.as_array()) {
+                let combined = extra
+                    .iter()
+                    .filter_map(status_description_to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .trim()
+                    .to_string();
+                if !combined.is_empty() {
+                    return Some(combined);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 fn build_handshake_packet(host: &str, port: u16, protocol_version: i32) -> Result<Vec<u8>> {

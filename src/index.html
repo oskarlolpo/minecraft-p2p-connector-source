@@ -14,8 +14,49 @@
             <img src="./assets/icons/banana-stroke-rounded.svg" alt="" />
           </div>
           <div class="brand-copy">
-            <span class="brand-label">MCP2P</span>
-            <strong>Minecraft P2P Connector</strong>
+            <span class="brand-label">Minecraft P2P Connector</span>
+            <strong id="brand-user-name">Player</strong>
+          </div>
+          <div class="profile-menu-shell">
+            <button id="profile-menu-trigger" class="avatar-trigger" type="button" aria-label="Open profile">
+              <img id="brand-avatar-image" class="hidden" alt="" />
+              <span id="brand-avatar-fallback">P</span>
+            </button>
+            <div id="profile-menu" class="profile-menu hidden">
+              <div class="profile-menu-head">
+                <strong data-i18n="profileMenuTitle">Профиль</strong>
+              </div>
+              <label class="field compact-field">
+                <span data-i18n="profileNicknameLabel">Ник в приложении</span>
+                <input
+                  id="profile-nickname"
+                  type="text"
+                  maxlength="32"
+                  placeholder="Oskar"
+                  data-i18n-placeholder="profileNicknamePlaceholder"
+                />
+              </label>
+              <label class="field compact-field">
+                <span data-i18n="profileMinecraftNicknameLabel">Ник в Minecraft</span>
+                <input
+                  id="profile-minecraft-nickname"
+                  type="text"
+                  maxlength="32"
+                  placeholder="Steve"
+                  data-i18n-placeholder="profileMinecraftNicknamePlaceholder"
+                />
+              </label>
+              <div class="avatar-picker-row">
+                <span data-i18n="profileAvatarLabel">Аватарка</span>
+                <button id="choose-avatar" class="ghost-button" type="button" data-i18n="profileChooseAvatar">
+                  Выбрать файл
+                </button>
+              </div>
+              <input id="profile-avatar-file" class="visually-hidden" type="file" accept="image/*" />
+              <button id="save-profile" class="primary-button profile-save-button" type="button" data-i18n="profileSaveButton">
+                Сохранить
+              </button>
+            </div>
           </div>
         </div>
 
@@ -29,28 +70,13 @@
             <span data-i18n="navSettings">Настройки</span>
           </button>
         </nav>
-
-        <div class="sidebar-profile">
-          <div class="profile-glyph">
-            <img src="./assets/icons/user-account.svg" alt="" />
-          </div>
-          <div class="profile-copy">
-            <span class="brand-label" data-i18n="localClientLabel">Локальный клиент</span>
-            <strong id="sidebar-client-id">mc-local</strong>
-          </div>
-        </div>
       </aside>
 
       <main class="workspace">
         <section id="page-home" class="page page-active">
           <header class="hero-panel">
             <div class="hero-left">
-              <div class="hero-chip" data-i18n="heroBadge">СЕТЕВОЙ МОСТ</div>
               <h1 data-i18n="appTitle">Minecraft P2P Connector</h1>
-              <p class="hero-copy" data-i18n="appSubtitle">
-                Быстрый LAN-коннектор для Minecraft Java. Создайте комнату, пригласите друга и подключайтесь к localhost без VPN-адаптеров.
-              </p>
-
               <div class="hero-actions">
                 <button id="open-host-modal" class="primary-button" type="button" data-i18n="hostServerButton">
                   Создать хост
@@ -60,15 +86,14 @@
                 </button>
               </div>
             </div>
-
             <div class="hero-right">
               <div class="status-orb">
-                <span class="status-label" data-i18n="ablyPresenceLabel">Ably Presence</span>
+                <span class="status-label">Ably Presence</span>
                 <strong id="connection-state">ОЖИДАНИЕ</strong>
                 <span id="ably-state">connecting</span>
               </div>
               <p id="host-lock-note" class="hero-note" data-i18n="hostNoteIdle">
-                Нажмите «Создать хост», чтобы опубликовать ваш локальный сервер или мир из LAN.
+                Запустите хост, чтобы опубликовать локальный мир или сервер.
               </p>
             </div>
           </header>
@@ -78,8 +103,7 @@
               <section class="panel panel-large">
                 <div class="panel-head">
                   <div>
-                    <span class="eyebrow" data-i18n="activeHostLabel">АКТИВНЫЙ ХОСТ</span>
-                    <h2 id="host-section-title" data-i18n="activeHostTitle">Состояние вашей комнаты</h2>
+                    <h2 id="host-section-title" data-i18n="activeHostTitle">Активная сессия</h2>
                   </div>
                   <button id="stop-button" class="ghost-button danger-button" type="button" data-i18n="stopButton">
                     Остановить
@@ -96,17 +120,14 @@
               <section class="panel">
                 <div class="panel-head">
                   <div>
-                    <span class="eyebrow" data-i18n="publicHostsLabel">ОПУБЛИКОВАННЫЕ КОМНАТЫ</span>
-                    <h2 id="lobby-count">0 rooms</h2>
+                    <span class="eyebrow" data-i18n="publicHostsLabel">Список серверов</span>
+                    <h2 id="lobby-count">0 server(s)</h2>
                   </div>
-                  <p class="panel-copy" data-i18n="publicHostsSubtitle">
-                    Список комнат обновляется через Ably Presence в реальном времени.
-                  </p>
                 </div>
                 <div class="row-head server-head">
-                  <span data-i18n="serverNameColumn">Комната</span>
+                  <span data-i18n="serverNameColumn">Сервер</span>
                   <span data-i18n="serverVersionColumn">Версия</span>
-                  <span data-i18n="serverPlayersColumn">Игроки</span>
+                  <span data-i18n="serverPlayersColumn">Онлайн</span>
                   <span data-i18n="serverActionColumn">Действие</span>
                 </div>
                 <div id="server-list" class="server-list"></div>
@@ -117,7 +138,6 @@
               <section class="panel snapshot-panel">
                 <div class="panel-head">
                   <div>
-                    <span class="eyebrow" data-i18n="networkSnapshotLabel">ТЕКУЩАЯ СЕССИЯ</span>
                     <h2 data-i18n="networkSnapshotTitle">Сетевой снимок</h2>
                   </div>
                 </div>
@@ -144,99 +164,66 @@
               <section class="panel selected-panel">
                 <div class="panel-head">
                   <div>
-                    <span class="eyebrow" data-i18n="selectedServerLabel">ВЫБРАННАЯ КОМНАТА</span>
-                    <h2 id="selected-server">Комната не выбрана</h2>
+                    <h2 id="selected-server" data-i18n="noSelection">Сервер не выбран</h2>
                   </div>
                 </div>
                 <div class="selected-card">
-                <div class="metric-row">
-                  <span data-i18n="selectedAddressLabel">Endpoint</span>
-                  <strong id="selected-endpoint">n/a</strong>
-                </div>
-                <div class="metric-row">
-                  <span data-i18n="selectedBedrockAddressLabel">Bedrock endpoint</span>
-                  <strong id="selected-bedrock-endpoint">n/a</strong>
-                </div>
-                <p id="selected-meta" class="panel-copy" data-i18n="selectedMetaEmpty">
-                  Выберите комнату из списка слева, чтобы увидеть адрес, версию и способ подключения.
-                </p>
-                <div class="hero-actions compact">
-                  <button id="copy-selected-endpoint" class="ghost-button" type="button" data-i18n="copyIpButton">
-                    Копировать адрес
-                  </button>
-                  <button id="copy-selected-bedrock-endpoint" class="ghost-button" type="button" data-i18n="copyBedrockIpButton">
-                    Копировать Bedrock
-                  </button>
-                  <button id="connect-selected" class="primary-button" type="button" data-i18n="connectButton">
-                    Подключиться
-                  </button>
-                </div>
+                  <div class="metric-row">
+                    <span data-i18n="selectedAddressLabel">Java endpoint</span>
+                    <strong id="selected-endpoint">n/a</strong>
+                  </div>
+                  <div class="metric-row">
+                    <span data-i18n="selectedBedrockAddressLabel">Bedrock endpoint</span>
+                    <strong id="selected-bedrock-endpoint">n/a</strong>
+                  </div>
+                  <p id="selected-meta" class="panel-copy" data-i18n="selectedMetaEmpty">Выберите сервер из списка.</p>
+                  <div class="hero-actions compact">
+                    <button id="copy-selected-endpoint" class="ghost-button" type="button" data-i18n="copyIpButton">
+                      Скопировать Java IP
+                    </button>
+                    <button id="copy-selected-bedrock-endpoint" class="ghost-button" type="button" data-i18n="copyBedrockIpButton">
+                      Скопировать Bedrock IP
+                    </button>
+                    <button id="connect-selected" class="primary-button" type="button" data-i18n="connectButton">
+                      Подключиться
+                    </button>
+                  </div>
                 </div>
               </section>
 
               <section class="panel">
                 <div class="panel-head">
                   <div>
-                    <span class="eyebrow" data-i18n="tunnelLabel">СОСТОЯНИЕ ТУННЕЛЯ</span>
-                    <h2 id="status-note">Ожидание</h2>
+                    <h2 id="status-note" data-i18n="hintWaiting">Ожидание действия...</h2>
                   </div>
                 </div>
-                <div id="minecraft-target-hint" class="minecraft-hint" data-i18n="hintWaiting">
-                  Ожидание действия...
-                </div>
+                <div id="minecraft-target-hint" class="minecraft-hint" data-i18n="hintWaiting">Ожидание действия...</div>
               </section>
 
               <section class="panel">
                 <div class="panel-head">
                   <div>
-                    <span class="eyebrow" data-i18n="diagnosticsSectionLabel">ДИАГНОСТИКА</span>
-                    <h2 data-i18n="diagnosticsSectionTitle">Проверка локального сервера</h2>
+                    <h2 data-i18n="diagnosticsSectionTitle">Диагностика</h2>
                   </div>
                 </div>
-                <p class="panel-copy" data-i18n="diagnosticsDescription">
-                  Используйте preflight и встроенный тестовый сервер, чтобы быстро понять, жив ли локальный Minecraft-порт.
-                </p>
                 <label class="field">
-                  <span data-i18n="testServerPortLabel">Порт диагностики</span>
+                  <span data-i18n="diagnosticsPortLabel">Порт диагностики</span>
                   <input id="test-server-port" type="number" min="1" max="65535" value="25566" />
                 </label>
                 <div class="tool-grid">
-                  <button id="run-preflight" class="ghost-button" type="button" data-i18n="runPreflightButton">
+                  <button id="run-preflight" class="ghost-button" type="button" data-i18n="diagnosticsRunPreflight">
                     Проверить Minecraft
                   </button>
-                  <button id="start-test-server" class="ghost-button" type="button" data-i18n="startTestServerButton">
+                  <button id="start-test-server" class="ghost-button" type="button" data-i18n="diagnosticsStartTestServer">
                     Запустить тестовый сервер
                   </button>
-                  <button id="stop-test-server" class="ghost-button" type="button" data-i18n="stopTestServerButton">
+                  <button id="stop-test-server" class="ghost-button" type="button" data-i18n="diagnosticsStopTestServer">
                     Остановить тестовый сервер
                   </button>
-                  <button id="probe-test-server" class="ghost-button" type="button" data-i18n="probeTestServerButton">
-                    Подключиться к тестовому серверу
+                  <button id="probe-test-server" class="ghost-button" type="button" data-i18n="diagnosticsProbeTestServer">
+                    Проверить тестовый сервер
                   </button>
                 </div>
-              </section>
-
-              <section class="panel log-panel">
-                <div class="panel-head">
-                  <div>
-                    <span class="eyebrow" data-i18n="eventLogLabel">ЖУРНАЛ</span>
-                    <h2 data-i18n="eventLogTitle">Отладка и сетевые события</h2>
-                  </div>
-                  <div class="hero-actions compact">
-                    <button id="copy-logs" class="ghost-button" type="button" data-i18n="copyLogButton">
-                      Копировать лог
-                    </button>
-                    <button
-                      id="copy-diagnostics"
-                      class="ghost-button"
-                      type="button"
-                      data-i18n="copyDiagnosticsButton"
-                    >
-                      Копировать диагностику
-                    </button>
-                  </div>
-                </div>
-                <div id="logs" class="log-list"></div>
               </section>
             </div>
           </div>
@@ -245,11 +232,11 @@
         <section id="page-settings" class="page">
           <header class="hero-panel settings-hero">
             <div class="hero-left">
-              <div class="hero-chip" data-i18n="settingsBadge">НАСТРОЙКИ</div>
-              <h1 data-i18n="settingsTitle">Приложение и оформление</h1>
-              <p class="hero-copy" data-i18n="settingsSubtitle">
-                Переключайте тему, язык и проверяйте служебные инструменты без отдельного overlay-режима.
-              </p>
+              <h1 data-i18n="settingsTitle">Настройки</h1>
+            </div>
+            <div class="hero-right settings-top-right">
+              <span class="status-label" data-i18n="settingsVersionLabel">Версия</span>
+              <strong id="settings-version">0.0.0</strong>
             </div>
           </header>
 
@@ -257,46 +244,21 @@
             <section class="panel">
               <div class="panel-head">
                 <div>
-                  <span class="eyebrow" data-i18n="profileSectionLabel">ПРОФИЛЬ</span>
-                  <h2 data-i18n="profileSectionTitle">Локальная идентичность</h2>
-                </div>
-              </div>
-              <div class="profile-card">
-                <div class="profile-glyph large">
-                  <img src="./assets/icons/user-account.svg" alt="" />
-                </div>
-                <div>
-                  <h3 data-i18n="profileCardTitle">Один клиент, один профиль</h3>
-                  <p class="panel-copy" data-i18n="profileCardDescription">
-                    Имя клиента формируется локально и используется для хоста, списка комнат и служебных handshake-сообщений.
-                  </p>
-                  <div class="profile-meta">
-                    <span class="tag">Client ID</span>
-                    <strong id="settings-client-id">mc-local</strong>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <span class="eyebrow" data-i18n="themeSectionLabel">ТЕМА</span>
-                  <h2 data-i18n="themeSectionTitle">Оформление</h2>
+                  <h2 data-i18n="themeSectionTitle">Тема</h2>
                 </div>
               </div>
               <div class="settings-options">
                 <button class="option-card" type="button" data-theme-value="white">
-                  <span data-i18n="themeWhiteTitle">Светлая</span>
-                  <small data-i18n="themeWhiteDescription">Более воздушная тема с холодными белыми поверхностями.</small>
+                  <span>Light</span>
+                  <small>Clean bright surfaces.</small>
                 </button>
                 <button class="option-card" type="button" data-theme-value="dark">
-                  <span data-i18n="themeDarkTitle">Graphite</span>
-                  <small data-i18n="themeDarkDescription">Спокойная тёмная тема с синим продуктовым акцентом.</small>
+                  <span>Graphite</span>
+                  <small>Balanced dark theme.</small>
                 </button>
                 <button class="option-card" type="button" data-theme-value="oled">
-                  <span data-i18n="themeOledTitle">Ember</span>
-                  <small data-i18n="themeOledDescription">Тёплая почти-чёрная тема в духе Warp.</small>
+                  <span>Ember</span>
+                  <small>Warm premium dark theme.</small>
                 </button>
               </div>
             </section>
@@ -304,20 +266,53 @@
             <section class="panel">
               <div class="panel-head">
                 <div>
-                  <span class="eyebrow" data-i18n="languageSectionLabel">ЯЗЫК</span>
-                  <h2 data-i18n="languageSectionTitle">Локализация</h2>
+                  <h2 data-i18n="languageSectionTitle">Язык</h2>
                 </div>
               </div>
               <div class="settings-options">
                 <button class="option-card" type="button" data-language-value="ru">
-                  <span data-i18n="languageRussianTitle">Русский</span>
-                  <small data-i18n="languageRussianDescription">Русские подписи, подсказки и сообщения интерфейса.</small>
+                  <span>Русский</span>
+                  <small>Русский интерфейс.</small>
                 </button>
                 <button class="option-card" type="button" data-language-value="en">
-                  <span data-i18n="languageEnglishTitle">English</span>
-                  <small data-i18n="languageEnglishDescription">English labels, controls, and helper copy.</small>
+                  <span>English</span>
+                  <small>English interface.</small>
                 </button>
               </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2 data-i18n="updatesSectionTitle">Обновления</h2>
+                </div>
+                <div class="hero-actions compact">
+                  <button id="check-updates" class="ghost-button" type="button" data-i18n="updatesCheckButton">
+                    Проверить обновления
+                  </button>
+                  <button id="install-update" class="primary-button hidden" type="button" data-i18n="updatesInstallButton">
+                    Установить
+                  </button>
+                </div>
+              </div>
+              <div id="update-status" class="panel-copy">—</div>
+            </section>
+
+            <section class="panel log-panel">
+              <div class="panel-head">
+                <div>
+                  <h2 data-i18n="settingsLogsTitle">Логи приложения</h2>
+                </div>
+                <div class="hero-actions compact">
+                  <button id="copy-logs" class="ghost-button" type="button" data-i18n="copyLogButton">
+                    Скопировать лог
+                  </button>
+                  <button id="copy-diagnostics" class="ghost-button" type="button" data-i18n="copyDiagnosticsButton">
+                    Скопировать JSON лог
+                  </button>
+                </div>
+              </div>
+              <div id="logs" class="log-list"></div>
             </section>
           </div>
         </section>
@@ -329,15 +324,15 @@
       <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="host-modal-title">
         <div class="panel-head">
           <div>
-            <span class="eyebrow" data-i18n="modalLabel">КОНФИГУРАЦИЯ ХОСТА</span>
-            <h2 id="host-modal-title" data-i18n="modalTitle">Создать комнату</h2>
+            <span class="eyebrow" data-i18n="modalLabel">ПАРАМЕТРЫ ХОСТА</span>
+            <h2 id="host-modal-title" data-i18n="modalTitle">Создать хост</h2>
           </div>
           <button id="close-modal" class="icon-button" type="button" aria-label="Закрыть">×</button>
         </div>
 
         <div class="modal-grid">
           <label class="field">
-            <span data-i18n="modalServerNameLabel">Название комнаты</span>
+            <span data-i18n="modalServerNameLabel">Название сервера</span>
             <input
               id="room-name"
               type="text"
@@ -351,9 +346,7 @@
             <span class="field-inline">
               <span data-i18n="modalPortLabel">Локальный Java-порт</span>
               <div class="field-inline-actions">
-                <button id="auto-detect-port" class="mini-button" type="button" data-i18n="modalAutoPortButton">
-                  Auto
-                </button>
+                <button id="auto-detect-port" class="mini-button" type="button" data-i18n="modalAutoPortButton">Auto</button>
                 <button class="help-badge" type="button" id="port-help" aria-label="Port help">?</button>
               </div>
             </span>
@@ -381,23 +374,30 @@
             <span data-i18n="modalGeyserToggle">Включить Bedrock bridge (Geyser)</span>
           </label>
 
-          <p class="modal-copy" data-i18n="modalGeyserDescription">
-            Поднимает встроенный мост Bedrock -> Java. Bedrock-клиенты смогут подключаться на указанный UDP-порт.
-          </p>
-
           <label id="geyser-port-field" class="field hidden">
             <span data-i18n="modalBedrockPortLabel">Bedrock UDP-порт</span>
             <input id="geyser-port" type="number" min="1" max="65535" value="19132" />
           </label>
+
+          <label class="checkbox-row">
+            <input id="external-host-mode" type="checkbox" />
+            <span data-i18n="modalExternalToggle">Добавить внешний сервер вместо локального хоста</span>
+          </label>
+
+          <label id="external-host-address-field" class="field hidden">
+            <span data-i18n="modalExternalHostLabel">IP или домен</span>
+            <input id="external-host-address" type="text" maxlength="255" placeholder="mc.example.com" />
+          </label>
+
+          <label id="external-host-port-field" class="field hidden">
+            <span data-i18n="modalExternalPortLabel">Порт</span>
+            <input id="external-host-port" type="number" min="1" max="65535" value="25565" />
+          </label>
         </div>
 
         <div class="modal-actions">
-          <button id="close-modal-secondary" class="ghost-button" type="button" data-i18n="cancelButton">
-            Отмена
-          </button>
-          <button id="host-button" class="primary-button" type="button" data-i18n="modalHostButton">
-            Запустить хост
-          </button>
+          <button id="close-modal-secondary" class="ghost-button" type="button" data-i18n="cancelButton">Отмена</button>
+          <button id="host-button" class="primary-button" type="button" data-i18n="modalHostButton">Запустить хост</button>
         </div>
       </div>
     </div>

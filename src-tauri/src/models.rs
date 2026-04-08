@@ -165,3 +165,37 @@ pub struct GeyserRuntimeInfo {
     pub note: Option<String>,
     pub last_error: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfo {
+    pub version: String,
+    pub product_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheckResult {
+    pub current_version: String,
+    pub latest_version: Option<String>,
+    pub available: bool,
+    pub release_url: Option<String>,
+    pub download_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallUpdateResult {
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalServerProbe {
+    pub room_name: String,
+    pub host_name: String,
+    pub version: Option<String>,
+    pub online_players: u32,
+    pub max_players: u32,
+    pub ping_ms: Option<u64>,
+}

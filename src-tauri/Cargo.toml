@@ -1,6 +1,6 @@
 [package]
 name = "minecraft-p2p-connector"
-version = "0.2.0"
+version = "0.3.16"
 edition = "2021"
 rust-version = "1.83"
 description = "Low-latency Minecraft Java P2P LAN connector over QUIC"
@@ -13,6 +13,7 @@ tauri-build = { version = "2.0" }
 anyhow = "1.0"
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rcgen = "0.13"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rumqttc = { version = "0.24", default-features = false, features = ["use-rustls"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde = { version = "1.0", features = ["derive"] }
