@@ -9,7 +9,7 @@ Windows desktop application for publishing and joining Minecraft Java Edition wo
 
 The project is built with Tauri 2, Rust, vanilla HTML/CSS/JavaScript, Quinn, Ably, and a small embedded diagnostics toolset.
 
-Current application version: `0.3.19`
+Current application version: `0.3.20`
 
 ## What The App Does
 
@@ -100,7 +100,7 @@ The application version must stay synchronized in all three places:
 
 If they drift, the settings screen and auto-update flow can report different versions and trigger false update behavior.
 
-Version `0.3.19` updates these files consistently.
+Version `0.3.20` updates these files consistently.
 
 ## Development
 
@@ -203,10 +203,13 @@ If the UI shows an older version than the built binary, fix the three version fi
 - check `src-tauri/tauri.conf.json`
 - ensure all three contain the same version
 
-## Release Notes For 0.3.19
+## Release Notes For 0.3.20
 
-- added optional e4mc public fallback for host sessions
-- presence now carries public join metadata
-- UI can surface and copy e4mc join domains
-- if direct in-app connection fails, the client now gets the public fallback address for manual join
-- version mismatch fixed so settings and updater stop disagreeing about `0.3.17` vs `0.3.19`
+- restored the broken client connection flow by wiring the UI back to the real backend tunnel events
+- kept e4mc as a public fallback and added transport badges plus inferred external-player visibility
+- hid the redundant selected-server and diagnostics panels and fixed the profile popup stacking issue
+- host room name now auto-fills from the live Minecraft world status when available
+- client runtime fingerprint now attempts to detect launcher, version, and mod loader from local launcher files and logs
+- local player snapshot sampling now helps surface Minecraft players that are online even when they are not visible through the QUIC peer list
+- automatic LAN port detection now runs without flashing console windows on Windows
+- version mismatch fixed so settings, bundle metadata, and updater all agree on `0.3.20`

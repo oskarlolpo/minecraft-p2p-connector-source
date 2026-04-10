@@ -5,6 +5,8 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use serde::Deserialize;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -13,9 +15,14 @@ use tokio::{
     time::{timeout, Duration},
 };
 
-use crate::models::{ExternalServerProbe, LanPortDetection, LocalTargetState, MinecraftNicknameDetection, PreflightReport};
+use crate::models::{
+    ExternalServerProbe, LanPortDetection, LocalPlayerSnapshot, LocalTargetState,
+    MinecraftClientRuntimeInfo, MinecraftNicknameDetection, PreflightReport,
+};
 
 const STATUS_PROTOCOL_CANDIDATES: &[i32] = &[767, 764, 760, 47];
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Deserialize)]
 struct StatusResponse {
@@ -33,6 +40,13 @@ struct MinecraftVersion {
 struct MinecraftPlayers {
     online: u32,
     max: u32,
+    #[serde(default)]
+    sample: Vec<MinecraftPlayerSample>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MinecraftPlayerSample {
+    name: String,
 }
 
 pub async fn detect_local_version(port: u16) -> Result<String> {
@@ -53,7 +67,11 @@ pub async fn probe_external_server(host: String, port: u16) -> Result<ExternalSe
     for protocol_version in STATUS_PROTOCOL_CANDIDATES {
         match query_status(&host, port, *protocol_version).await {
             Ok(response) => {
-                let players = response.players.unwrap_or(MinecraftPlayers { online: 0, max: 0 });
+                let players = response.players.unwrap_or(MinecraftPlayers {
+                    online: 0,
+                    max: 0,
+                    sample: Vec::new(),
+                });
                 return Ok(ExternalServerProbe {
                     room_name: status_description_to_string(&response.description)
                         .unwrap_or_else(|| host.clone()),
@@ -119,6 +137,30 @@ pub async fn detect_minecraft_nickname() -> Result<MinecraftNicknameDetection> {
         .context("failed to await Minecraft nickname detector task")?
 }
 
+pub async fn detect_client_runtime_info() -> Result<MinecraftClientRuntimeInfo> {
+    task::spawn_blocking(detect_client_runtime_info_blocking)
+        .await
+        .context("failed to await Minecraft runtime detector task")?
+}
+
+pub async fn read_local_player_snapshot(port: u16) -> Result<LocalPlayerSnapshot> {
+    let response = detect_status_response("127.0.0.1", port).await?;
+    let players = response.players.unwrap_or(MinecraftPlayers {
+        online: 0,
+        max: 0,
+        sample: Vec::new(),
+    });
+    Ok(LocalPlayerSnapshot {
+        online_players: players.online,
+        max_players: players.max,
+        sample_names: players
+            .sample
+            .into_iter()
+            .filter_map(|sample| sanitize_minecraft_nickname(&sample.name))
+            .collect(),
+    })
+}
+
 async fn query_status(host: &str, port: u16, protocol_version: i32) -> Result<StatusResponse> {
     let target = format!("{host}:{port}");
     let mut stream = timeout(Duration::from_secs(2), TcpStream::connect(&target))
@@ -148,6 +190,18 @@ async fn query_status(host: &str, port: u16, protocol_version: i32) -> Result<St
     let response: StatusResponse =
         serde_json::from_slice(&payload).context("failed to parse Minecraft status JSON")?;
     Ok(response)
+}
+
+async fn detect_status_response(host: &str, port: u16) -> Result<StatusResponse> {
+    let mut last_error = None;
+    for protocol_version in STATUS_PROTOCOL_CANDIDATES {
+        match query_status(host, port, *protocol_version).await {
+            Ok(response) => return Ok(response),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow!("failed to get a valid Minecraft status response")))
 }
 
 async fn probe_local_tcp(port: u16) -> Result<()> {
@@ -372,7 +426,7 @@ fn parse_port_candidate(value: &str) -> Option<u16> {
 }
 
 fn detect_lan_port_from_system_listeners() -> Option<LanPortDetection> {
-    let output = Command::new("netstat")
+    let output = hidden_command("netstat")
         .args(["-ano", "-p", "tcp"])
         .output()
         .ok()?;
@@ -459,7 +513,7 @@ fn is_local_bind_host(host: &str) -> bool {
 }
 
 fn pid_looks_like_java(pid: u32) -> bool {
-    let output = Command::new("tasklist")
+    let output = hidden_command("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
         .output();
 
@@ -483,6 +537,15 @@ fn pid_looks_like_java(pid: u32) -> bool {
     process_name.contains("java")
 }
 
+fn hidden_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
 fn detect_minecraft_nickname_blocking() -> Result<MinecraftNicknameDetection> {
     let candidates = collect_nickname_sources();
     for path in candidates {
@@ -499,6 +562,36 @@ fn detect_minecraft_nickname_blocking() -> Result<MinecraftNicknameDetection> {
         }
     }
     Err(anyhow!("could not detect minecraft nickname from launcher files or logs"))
+}
+
+fn detect_client_runtime_info_blocking() -> Result<MinecraftClientRuntimeInfo> {
+    let nickname = detect_minecraft_nickname_blocking().ok();
+    let candidates = collect_nickname_sources();
+
+    for path in candidates {
+        if !path.exists() {
+            continue;
+        }
+        let Some(contents) = read_text_lossy(&path) else {
+            continue;
+        };
+        let launcher = infer_launcher_from_path(&path);
+        let (minecraft_version, mod_loader) = infer_runtime_from_file(&path, &contents);
+        if launcher.is_some() || minecraft_version.is_some() || mod_loader.is_some() {
+            return Ok(MinecraftClientRuntimeInfo {
+                nickname: nickname.as_ref().map(|value| value.nickname.clone()),
+                launcher,
+                minecraft_version,
+                mod_loader,
+                source_path: Some(path.display().to_string()),
+                note: nickname.as_ref().map(|value| format!("nickname source: {}", value.source_path)),
+            });
+        }
+    }
+
+    Err(anyhow!(
+        "could not detect launcher, Minecraft version, or mod loader from local launcher files/logs"
+    ))
 }
 
 fn collect_nickname_sources() -> Vec<PathBuf> {
@@ -652,6 +745,119 @@ fn parse_logs_nick(contents: &str) -> Option<String> {
                 }
             }
         }
+    }
+    None
+}
+
+fn infer_runtime_from_file(path: &Path, contents: &str) -> (Option<String>, Option<String>) {
+    let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
+    if name == "launcher_profiles.json" || name == "launcher_accounts.json" {
+        let version = parse_launcher_version(contents);
+        return (version, None);
+    }
+    if name.ends_with(".log") || name.ends_with(".txt") {
+        return parse_log_runtime(contents);
+    }
+    (None, None)
+}
+
+fn parse_launcher_version(contents: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(contents).ok()?;
+    value
+        .as_object()
+        .and_then(|obj| obj.get("profiles"))
+        .and_then(|profiles| profiles.as_object())
+        .and_then(|profiles| {
+            profiles.values().find_map(|profile| {
+                profile
+                    .get("lastVersionId")
+                    .and_then(|item| item.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+        })
+}
+
+fn parse_log_runtime(contents: &str) -> (Option<String>, Option<String>) {
+    let mut minecraft_version = None;
+    let mut mod_loader = None;
+
+    for line in contents.lines().rev() {
+        let trimmed = line.trim();
+        if minecraft_version.is_none() {
+            if let Some((version, loader)) = parse_fabric_runtime(trimmed) {
+                minecraft_version = Some(version);
+                mod_loader = Some(loader);
+                break;
+            }
+            if let Some((version, loader)) = parse_quilt_runtime(trimmed) {
+                minecraft_version = Some(version);
+                mod_loader = Some(loader);
+                break;
+            }
+            if let Some((version, loader)) = parse_forge_runtime(trimmed) {
+                minecraft_version = Some(version);
+                mod_loader = Some(loader);
+                break;
+            }
+            if let Some(version) = parse_launched_version(trimmed) {
+                minecraft_version = Some(version);
+            }
+        }
+    }
+
+    (minecraft_version, mod_loader)
+}
+
+fn parse_fabric_runtime(line: &str) -> Option<(String, String)> {
+    let (_, tail) = line.split_once("Loading Minecraft ")?;
+    let (version, loader_tail) = tail.split_once(" with Fabric Loader ")?;
+    Some((version.trim().to_string(), format!("Fabric {}", loader_tail.trim())))
+}
+
+fn parse_quilt_runtime(line: &str) -> Option<(String, String)> {
+    let (_, tail) = line.split_once("Loading Minecraft ")?;
+    let (version, loader_tail) = tail.split_once(" with Quilt Loader ")?;
+    Some((version.trim().to_string(), format!("Quilt {}", loader_tail.trim())))
+}
+
+fn parse_forge_runtime(line: &str) -> Option<(String, String)> {
+    let (_, tail) = line.split_once("Forge mod loading, version ")?;
+    let (forge_version, rest) = tail.split_once(", for MC ")?;
+    let mc_version = rest
+        .split_whitespace()
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    Some((mc_version.to_string(), format!("Forge {}", forge_version.trim())))
+}
+
+fn parse_launched_version(line: &str) -> Option<String> {
+    let (_, tail) = line.split_once("Launched Version: ")?;
+    let version = tail.split_whitespace().next()?.trim();
+    (!version.is_empty()).then(|| version.to_string())
+}
+
+fn infer_launcher_from_path(path: &Path) -> Option<String> {
+    let normalized = path.display().to_string().to_ascii_lowercase();
+    if normalized.contains("prismlauncher") {
+        return Some("PrismLauncher".into());
+    }
+    if normalized.contains("multimc") {
+        return Some("MultiMC".into());
+    }
+    if normalized.contains("curseforge") {
+        return Some("CurseForge".into());
+    }
+    if normalized.contains(".tlauncher") {
+        return Some("TLauncher".into());
+    }
+    if normalized.contains("microsoft.4297127d64ec6_8wekyb3d8bbwe") {
+        return Some("Minecraft Launcher (MS Store)".into());
+    }
+    if normalized.contains(".minecraft") {
+        return Some("Minecraft Launcher".into());
     }
     None
 }

@@ -133,6 +133,9 @@ const state = {
   peerProfiles: new Map(),
   updateInfo: null,
   detectedMinecraftNickname: null,
+  runtimeFingerprint: null,
+  localWorldPlayers: [],
+  lastLocalPlayerSyncAt: 0,
   e4mcEnabled: loadE4mcPreference(),
 };
 
@@ -307,16 +310,50 @@ async function detectMinecraftNickname() {
   }
 }
 
+async function detectRuntimeFingerprint() {
+  try {
+    const runtime = await invoke("detect_client_runtime_info_command");
+    state.runtimeFingerprint = runtime ?? null;
+    if (runtime?.launcher || runtime?.minecraftVersion || runtime?.modLoader) {
+      addLog(
+        `Runtime fingerprint: launcher=${runtime?.launcher ?? "unknown"}, version=${runtime?.minecraftVersion ?? "unknown"}, modloader=${runtime?.modLoader ?? "vanilla"}`,
+      );
+    } else {
+      addLog("Runtime fingerprint incomplete: launcher/version/modloader were not detected.");
+    }
+  } catch (error) {
+    state.runtimeFingerprint = null;
+    addLog(`Runtime fingerprint not found: ${String(error)}`);
+  }
+}
+
 async function autoDetectLocalGamePort() {
   try {
     autoDetectPortEl.disabled = true;
     const detection = await invoke("detect_lan_port");
     localGamePortEl.value = String(detection.port);
     addLog(t("autoPortDetected", { port: detection.port, path: detection.sourcePath }));
+    await autofillRoomNameFromLocalServer();
   } catch (error) {
     addLog(t("autoPortFailed", { error: String(error) }));
   } finally {
     autoDetectPortEl.disabled = false;
+  }
+}
+
+async function autofillRoomNameFromLocalServer() {
+  const localPort = Number(localGamePortEl.value || 25565);
+  if (!localPort) return;
+  try {
+    const probe = await invoke("query_external_server", { host: "127.0.0.1", port: localPort });
+    const detectedName = String(probe?.roomName || "").trim();
+    if (!detectedName) return;
+    if (!roomNameEl.value.trim() || roomNameEl.dataset.autofilled === "true") {
+      roomNameEl.value = detectedName;
+      roomNameEl.dataset.autofilled = "true";
+    }
+  } catch {
+    // Ignore: local world metadata is optional.
   }
 }
 
@@ -482,6 +519,7 @@ function openModal() {
   if (enableE4mcEl) enableE4mcEl.checked = Boolean(state.e4mcEnabled);
   modalEl.classList.remove("hidden");
   modalEl.setAttribute("aria-hidden", "false");
+  void autofillRoomNameFromLocalServer();
   setTimeout(() => roomNameEl.focus(), 30);
 }
 
@@ -523,7 +561,71 @@ function formatTransportLabel(transport) {
   if (transport === "relay-circuit" || transport === "relay-reservation") return "Circuit Relay v2";
   if (transport === "direct-hole-punch") return "DCUtR hole punch";
   if (transport === "direct" || transport === "direct-quic") return "Direct libp2p";
+  if (transport === "e4mc-public") return "e4mc";
   return transport ?? "unknown transport";
+}
+
+function buildPeerSummaryLines(peer, profile = null) {
+  return [
+    `${t("profileNicknameLabel")}: ${profile?.nickname || peer.peerId || "n/a"}`,
+    `${t("profileMinecraftNicknameLabel")}: ${profile?.minecraftNickname || "n/a"}`,
+    `Launcher: ${profile?.launcher || "unknown"}`,
+    `Version: ${profile?.minecraftVersion || "unknown"}`,
+    `Mod loader: ${profile?.modLoader || "unknown"}`,
+    `Address: ${peer.addr || "n/a"}`,
+    `Transport: ${formatTransportLabel(peer.transport)}`,
+    `Ping: ${peer.pingMs == null ? "n/a" : `${peer.pingMs} ms`}`,
+  ].join("\n");
+}
+
+function getTrackedMinecraftNames(peers) {
+  const names = new Set();
+  const ownNames = [
+    state.detectedMinecraftNickname,
+    state.profile.nickname,
+  ].filter(Boolean);
+  ownNames.forEach((value) => names.add(String(value).trim().toLowerCase()));
+  peers.forEach((peer) => {
+    const profile = state.peerProfiles.get(peer.peerId) ?? null;
+    [profile?.minecraftNickname, profile?.nickname, peer.peerId].filter(Boolean).forEach((value) => {
+      names.add(String(value).trim().toLowerCase());
+    });
+  });
+  return names;
+}
+
+function buildInferredPlayers(peers) {
+  if (state.status?.mode !== "host") return [];
+  const trackedNames = getTrackedMinecraftNames(peers);
+  return (state.localWorldPlayers || [])
+    .filter((name) => !trackedNames.has(String(name).trim().toLowerCase()))
+    .map((name) => ({
+      peerId: `minecraft:${name}`,
+      addr: "minecraft-status",
+      connected: true,
+      pingMs: null,
+      transport: state.status?.e4mcDomain ? "e4mc-public" : "unknown transport",
+      inferred: true,
+      inferredName: name,
+    }));
+}
+
+async function refreshLocalWorldPlayers(force = false, statusSnapshot = state.status) {
+  const now = Date.now();
+  if (!force && now - state.lastLocalPlayerSyncAt < 5000) return;
+  if (statusSnapshot?.mode !== "host" || !statusSnapshot?.localGamePort) {
+    state.localWorldPlayers = [];
+    state.lastLocalPlayerSyncAt = now;
+    return;
+  }
+  try {
+    const snapshot = await invoke("get_local_player_snapshot_command", { port: Number(statusSnapshot.localGamePort) });
+    state.localWorldPlayers = Array.isArray(snapshot?.sampleNames) ? snapshot.sampleNames : [];
+    state.lastLocalPlayerSyncAt = now;
+  } catch (error) {
+    state.lastLocalPlayerSyncAt = now;
+    addLog(`Local player snapshot unavailable: ${String(error)}`);
+  }
 }
 
 function getSelectedServer() {
@@ -774,8 +876,9 @@ function renderSessionCard() {
 
 function renderPeers(peers) {
   const hostMode = state.status?.mode === "host";
+  const inferredPlayers = buildInferredPlayers(peers);
   const hostVirtualCount = hostMode && hostSession.active ? 1 : 0;
-  peerCountEl.textContent = t("peerCount", { count: (peers?.length ?? 0) + hostVirtualCount });
+  peerCountEl.textContent = t("peerCount", { count: (peers?.length ?? 0) + inferredPlayers.length + hostVirtualCount });
 
   if (!peers?.length && !hostMode) {
     peerListEl.innerHTML = `<div class="empty-state">${escapeHtml(t("noPeers"))}</div>`;
@@ -786,15 +889,29 @@ function renderPeers(peers) {
   if (hostMode && hostSession.active) {
     const nickname = state.profile.nickname?.trim() || "Player";
     const minecraftNick = state.detectedMinecraftNickname ? ` · ${state.detectedMinecraftNickname}` : "";
+    const hostTransport = state.status?.e4mcDomain
+      ? `${formatTransportLabel(state.status?.transportPath)} + e4mc`
+      : formatTransportLabel(state.status?.transportPath);
+    const hostSummary = [
+      `${t("profileNicknameLabel")}: ${nickname}`,
+      `${t("profileMinecraftNicknameLabel")}: ${state.detectedMinecraftNickname ?? "n/a"}`,
+      `Launcher: ${state.runtimeFingerprint?.launcher ?? "unknown"}`,
+      `Version: ${state.runtimeFingerprint?.minecraftVersion ?? state.status?.minecraftVersion ?? "unknown"}`,
+      `Mod loader: ${state.runtimeFingerprint?.modLoader ?? "unknown"}`,
+      `Address: ${hostSession.peerAddr ? toSocketEndpoint(hostSession.peerAddr) ?? hostSession.peerAddr : "n/a"}`,
+      `Transport: ${hostTransport || "n/a"}`,
+      `e4mc: ${state.status?.e4mcDomain ?? "n/a"}`,
+    ].join("\n");
     rows.push(`
       <div class="player-row">
         <div class="player-main">
-          <strong>${escapeHtml(nickname)} <span class="row-chip">${escapeHtml(t("hostBadge"))}</span></strong>
+          <strong>${escapeHtml(nickname)} <span class="row-chip">${escapeHtml(t("hostBadge"))}</span> <span class="row-chip">${escapeHtml(hostTransport)}</span></strong>
           <span>${escapeHtml(`${t("profileMinecraftNicknameLabel")}: ${state.detectedMinecraftNickname ?? "n/a"}`)}</span>
           <span>${escapeHtml(hostSession.peerAddr ? toSocketEndpoint(hostSession.peerAddr) ?? hostSession.peerAddr : "n/a")}</span>
           <span>${escapeHtml(`online${minecraftNick}`)}</span>
         </div>
         <div class="player-actions">
+          <button class="help-badge" type="button" title="${escapeHtml(hostSummary)}">?</button>
           <div class="row-action-button">${escapeHtml(t("playerPassiveAction"))}</div>
         </div>
       </div>
@@ -802,9 +919,9 @@ function renderPeers(peers) {
   }
 
   rows.push(
-    ...peers.map((peer) => {
+    ...[...peers, ...inferredPlayers].map((peer) => {
       const profile = state.peerProfiles.get(peer.peerId) ?? null;
-      const canKick = hostMode && peer.connected;
+      const canKick = hostMode && peer.connected && !peer.inferred;
       const label = state.pendingKicks.has(peer.peerId)
         ? t("kickPendingButton")
         : canKick
@@ -814,12 +931,13 @@ function renderPeers(peers) {
       return `
         <div class="player-row">
           <div class="player-main">
-          <strong>${escapeHtml(profile?.nickname || peer.peerId)}</strong>
-          ${profile?.minecraftNickname ? `<span>${escapeHtml(profile.minecraftNickname)}</span>` : ""}
+          <strong>${escapeHtml(peer.inferredName || profile?.nickname || peer.peerId)} <span class="row-chip">${escapeHtml(peer.inferred ? "External" : formatTransportLabel(peer.transport))}</span></strong>
+          ${(peer.inferredName || profile?.minecraftNickname) ? `<span>${escapeHtml(peer.inferredName || profile?.minecraftNickname)}</span>` : ""}
           <span>${escapeHtml(peer.addr)}</span>
           <span>${peer.connected ? "online" : "pending"} · ${peer.pingMs == null ? "n/a" : `${peer.pingMs} ms`}</span>
         </div>
         <div class="player-actions">
+            <button class="help-badge" type="button" title="${escapeHtml(buildPeerSummaryLines(peer, profile))}">?</button>
             ${
               canKick
                 ? `<button class="secondary-button row-action-button" data-kick-peer="${escapeHtml(peer.peerId)}" ${
@@ -959,6 +1077,9 @@ function hydrateServers(members) {
         bedrockPort: data.bedrock_port ?? null,
         bedrockEndpoint: data.bedrock_endpoint ?? null,
         minecraftNickname: data.minecraft_nickname ?? null,
+        launcher: data.launcher ?? null,
+        minecraftVersionRuntime: data.client_minecraft_version ?? null,
+        modLoader: data.mod_loader ?? null,
         external: false,
       };
     })
@@ -1064,6 +1185,9 @@ function buildPresencePayload(status) {
     room_name: hostSession.roomName,
     host_name: state.profile.nickname,
     minecraft_nickname: state.detectedMinecraftNickname ?? null,
+    launcher: state.runtimeFingerprint?.launcher ?? null,
+    client_minecraft_version: state.runtimeFingerprint?.minecraftVersion ?? null,
+    mod_loader: state.runtimeFingerprint?.modLoader ?? null,
     slots: `${online}/${maxPlayers}`,
     has_password: hostSession.hasPassword,
     peer_id: hostSession.peerId ?? localClientId,
@@ -1197,8 +1321,11 @@ async function bindChannelHandlers() {
       const requester = message.data?.client_id ?? message.clientId ?? "unknown";
       const nickname = message.data?.nickname ?? requester;
       const minecraftNickname = message.data?.minecraft_nickname ?? null;
+      const launcher = message.data?.launcher ?? null;
+      const minecraftVersion = message.data?.client_minecraft_version ?? null;
+      const modLoader = message.data?.mod_loader ?? null;
       const relaySessionId = message.data?.relay_session_id ?? null;
-      state.peerProfiles.set(requester, { nickname, minecraftNickname });
+      state.peerProfiles.set(requester, { nickname, minecraftNickname, launcher, minecraftVersion, modLoader });
       addLog(t("incomingHandshake", { peer: requester, addr: peerAddr ?? "n/a" }));
       if (!peerAddr) return;
 
@@ -1374,6 +1501,7 @@ async function probeEmbeddedTestServer() {
 async function startHosting() {
   if (!canOpenHostModal()) return;
   await detectMinecraftNickname();
+  await autofillRoomNameFromLocalServer();
   const roomName = roomNameEl.value.trim();
   if (!roomName) {
     roomNameEl.focus();
@@ -1435,6 +1563,11 @@ async function startHosting() {
     hostSession.e4mcDomain = status.e4mcDomain ?? hostSession.e4mcDomain;
     try {
       const localMeta = await invoke("query_external_server", { host: "127.0.0.1", port: localPort });
+      if (localMeta?.roomName) {
+        hostSession.roomName = localMeta.roomName;
+        roomNameEl.value = localMeta.roomName;
+        roomNameEl.dataset.autofilled = "true";
+      }
       const maxPlayers = Number(localMeta?.maxPlayers ?? 0);
       hostSession.maxPlayers = maxPlayers > 0 ? maxPlayers : 30;
     } catch {
@@ -1556,14 +1689,17 @@ async function connectToServer(server) {
       8000,
     );
     renderStatus(status);
-    await state.realtime.channels.get(`lobby:${server.clientId}`).publish("connect-request", {
-      client_id: localClientId,
-      nickname: state.profile.nickname,
-      minecraft_nickname: state.detectedMinecraftNickname ?? null,
-      room_name: server.roomName,
-      peer_addr: status.publicUdpAddr ?? status.udpBindAddr,
-      relay_session_id: relaySessionId,
-    });
+      await state.realtime.channels.get(`lobby:${server.clientId}`).publish("connect-request", {
+        client_id: localClientId,
+        nickname: state.profile.nickname,
+        minecraft_nickname: state.detectedMinecraftNickname ?? null,
+        launcher: state.runtimeFingerprint?.launcher ?? null,
+        client_minecraft_version: state.runtimeFingerprint?.minecraftVersion ?? null,
+        mod_loader: state.runtimeFingerprint?.modLoader ?? null,
+        room_name: server.roomName,
+        peer_addr: status.publicUdpAddr ?? status.udpBindAddr,
+        relay_session_id: relaySessionId,
+      });
     addLog(t("connectRequestSent", { host: server.clientId }));
   } catch (error) {
     state.pendingConnects.delete(server.clientId);
@@ -1596,6 +1732,7 @@ async function kickPeer(peerId) {
 async function pollStatus() {
   try {
     const status = await invoke("get_status");
+    await refreshLocalWorldPlayers(false, status);
     renderStatus(status);
     await syncPresence(status);
   } catch (error) {
@@ -1629,13 +1766,13 @@ function rerender() {
   );
 }
 
-await listen("peer_connected", async (event) => {
+await listen("tunnel_established", async (event) => {
   state.pendingConnects.clear();
   state.tunnelReady = true;
-  state.activeTunnelTransport = event.payload?.relayed ? "relay-circuit" : "direct";
+  state.activeTunnelTransport = event.payload?.transport ?? state.activeTunnelTransport ?? "direct-quic";
   setMinecraftHint(t("hintConnected"), true);
   addLog(
-    `${t("tunnelEstablishedLog", { addr: "localhost:25565" })} (${formatTransportLabel(
+    `${t("tunnelEstablishedLog", { addr: event.payload?.minecraftAddr ?? "localhost:25565" })} (${formatTransportLabel(
       state.activeTunnelTransport,
     )})`,
   );
@@ -1645,16 +1782,15 @@ await listen("peer_connected", async (event) => {
   renderServers();
 });
 
-await listen("connection_success", async (event) => {
+await listen("tunnel_failed", async (event) => {
   state.pendingConnects.clear();
-  state.tunnelReady = true;
-  state.activeTunnelTransport = event.payload?.transport ?? "reverse-tunnel";
-  setMinecraftHint(t("hintConnected"), true);
-  addLog(
-    `${t("tunnelEstablishedLog", { addr: "localhost:25565" })} (${formatTransportLabel(
-      state.activeTunnelTransport,
-    )})`,
-  );
+  state.tunnelReady = false;
+  setMinecraftHint(t("hintFailed"), false);
+  if (event.payload?.reason) {
+    addLog(`${t("tunnelFailedLog")} ${String(event.payload.reason)}`);
+  } else {
+    addLog(t("tunnelFailedLog"));
+  }
   const status = await invoke("get_status");
   renderStatus(status);
   renderServers();
@@ -1717,6 +1853,9 @@ modalEl.addEventListener("click", (event) => {
 
 requirePasswordEl.addEventListener("change", syncPasswordField);
 enableGeyserEl.addEventListener("change", syncGeyserField);
+roomNameEl.addEventListener("input", () => {
+  roomNameEl.dataset.autofilled = "false";
+});
 hostButtonEl.addEventListener("click", startHosting);
 stopButtonEl.addEventListener("click", stopSession);
 refreshLobbyEl.addEventListener("click", async () => {
@@ -1833,6 +1972,12 @@ document.addEventListener("keydown", (event) => {
 document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof Node)) return;
+  const element = target instanceof HTMLElement ? target : null;
+  const button = element?.closest("button");
+  if (button && !button.disabled) {
+    const label = button.dataset.i18n ? t(button.dataset.i18n) : button.textContent?.trim() || button.id || "button";
+    addLog(`UI action: ${label}`);
+  }
   if (!profileMenuEl?.contains(target) && !profileMenuTriggerEl?.contains(target)) {
     toggleProfileMenu(false);
   }
@@ -1859,6 +2004,7 @@ setInterval(() => {
   void pollStatus();
 }, POLL_INTERVAL_MS);
 
+await detectRuntimeFingerprint();
 await setupAbly();
 await pollStatus();
 

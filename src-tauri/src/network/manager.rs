@@ -378,7 +378,13 @@ impl NetworkManager {
             ));
         })
         .await;
-        self.upsert_peer(display_peer.clone(), peer_addr, false, None)
+        self.upsert_peer(
+            display_peer.clone(),
+            peer_addr,
+            false,
+            None,
+            Some("direct-quic".into()),
+        )
             .await;
         self.push_log(format!("Host punch -> {display_peer} ({peer_addr})"))
             .await;
@@ -501,6 +507,7 @@ impl NetworkManager {
                 addr: peer_addr.to_string(),
                 connected: false,
                 ping_ms: None,
+                transport: Some("direct-quic".into()),
             }],
             logs: vec![
                 format!("Client bind: {udp_bind_addr}"),
@@ -579,6 +586,7 @@ impl NetworkManager {
                 addr: peer_addr.to_string(),
                 connected: true,
                 ping_ms: Some(connection.rtt().as_millis() as u64),
+                transport: Some("direct-quic".into()),
             }];
         })
         .await;
@@ -651,6 +659,7 @@ impl NetworkManager {
                                 remote,
                                 true,
                                 Some(connection.rtt().as_millis() as u64),
+                                Some("direct-quic".into()),
                             )
                             .await;
                         manager
@@ -887,6 +896,7 @@ impl NetworkManager {
                 addr: peer_addr.to_string(),
                 connected: true,
                 ping_ms: None,
+                transport: Some("ably-relay".into()),
             }];
         })
         .await;
@@ -1153,18 +1163,21 @@ impl NetworkManager {
         addr: SocketAddr,
         connected: bool,
         ping_ms: Option<u64>,
+        transport: Option<String>,
     ) {
         self.mutate_status(|status| {
             if let Some(peer) = status.peers.iter_mut().find(|peer| peer.peer_id == peer_id) {
                 peer.addr = addr.to_string();
                 peer.connected = connected;
                 peer.ping_ms = ping_ms;
+                peer.transport = transport.clone().or_else(|| peer.transport.clone());
             } else {
                 status.peers.push(PeerInfo {
                     peer_id,
                     addr: addr.to_string(),
                     connected,
                     ping_ms,
+                    transport,
                 });
             }
 

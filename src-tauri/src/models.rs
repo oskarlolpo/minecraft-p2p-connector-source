@@ -50,6 +50,7 @@ pub struct PeerInfo {
     pub addr: String,
     pub connected: bool,
     pub ping_ms: Option<u64>,
+    pub transport: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -140,6 +141,25 @@ pub struct LanPortDetection {
 pub struct MinecraftNicknameDetection {
     pub nickname: String,
     pub source_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MinecraftClientRuntimeInfo {
+    pub nickname: Option<String>,
+    pub launcher: Option<String>,
+    pub minecraft_version: Option<String>,
+    pub mod_loader: Option<String>,
+    pub source_path: Option<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalPlayerSnapshot {
+    pub online_players: u32,
+    pub max_players: u32,
+    pub sample_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

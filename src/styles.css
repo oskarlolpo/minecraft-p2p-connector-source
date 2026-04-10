@@ -239,6 +239,8 @@ body[data-theme="white"] .nav-button img {
   min-height: 0;
   height: 100%;
   overflow: hidden;
+  position: relative;
+  z-index: 1;
 }
 
 .page {
@@ -921,7 +923,17 @@ body[data-theme="white"] .nav-button img {
   border-radius: 22px;
   background: var(--surface-strong);
   box-shadow: var(--shadow);
-  z-index: 2000;
+  z-index: 10000;
+}
+
+.selected-panel,
+.panel:has(#test-server-port),
+#test-server-port,
+#run-preflight,
+#start-test-server,
+#stop-test-server,
+#probe-test-server {
+  display: none !important;
 }
 
 .profile-menu::-webkit-scrollbar {

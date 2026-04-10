@@ -9,15 +9,16 @@ mod network;
 mod signaling;
 
 use network::minecraft::{
-    build_preflight_report, detect_lan_port_from_logs, detect_minecraft_nickname, probe_external_server,
+    build_preflight_report, detect_client_runtime_info, detect_lan_port_from_logs,
+    detect_minecraft_nickname, probe_external_server, read_local_player_snapshot,
 };
 use network::manager::NetworkManager;
 use network::geyser::GeyserManager;
 use network::test_server::{probe_test_server, TestServerManager};
 use models::{
     AppInfo, DiagnosticSnapshot, ExternalServerProbe, InstallUpdateResult, LanPortDetection,
-    MinecraftNicknameDetection, NetworkStatus, PreflightReport, SwarmBootstrap, TestServerInfo,
-    UpdateCheckResult,
+    LocalPlayerSnapshot, MinecraftClientRuntimeInfo, MinecraftNicknameDetection, NetworkStatus,
+    PreflightReport, SwarmBootstrap, TestServerInfo, UpdateCheckResult,
 };
 use std::{path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, State};
@@ -187,6 +188,20 @@ async fn detect_lan_port() -> Result<LanPortDetection, String> {
 #[tauri::command]
 async fn detect_minecraft_nickname_command() -> Result<MinecraftNicknameDetection, String> {
     detect_minecraft_nickname()
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+async fn detect_client_runtime_info_command() -> Result<MinecraftClientRuntimeInfo, String> {
+    detect_client_runtime_info()
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+async fn get_local_player_snapshot_command(port: u16) -> Result<LocalPlayerSnapshot, String> {
+    read_local_player_snapshot(port)
         .await
         .map_err(|error| format!("{error:#}"))
 }
@@ -425,6 +440,8 @@ fn main() {
             run_preflight,
             detect_lan_port,
             detect_minecraft_nickname_command,
+            detect_client_runtime_info_command,
+            get_local_player_snapshot_command,
             query_external_server,
             get_app_info,
             check_for_updates,
