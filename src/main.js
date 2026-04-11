@@ -106,6 +106,7 @@ const hostSession = {
   minecraftVersion: null,
   publicJoinAddress: null,
   e4mcDomain: null,
+  e4mcVerified: false,
   presencePayload: null,
   presenceEntered: false,
 };
@@ -428,9 +429,15 @@ async function installUpdate() {
 }
 
 function toggleProfileMenu(force) {
+  ensureProfileMenuPortal();
   const open = typeof force === "boolean" ? force : profileMenuEl.classList.contains("hidden");
   profileMenuEl.classList.toggle("hidden", !open);
   if (open) requestAnimationFrame(positionProfileMenu);
+}
+
+function ensureProfileMenuPortal() {
+  if (!profileMenuEl || profileMenuEl.parentElement === document.body) return;
+  document.body.appendChild(profileMenuEl);
 }
 
 function positionProfileMenu() {
@@ -578,17 +585,36 @@ function buildPeerSummaryLines(peer, profile = null) {
   ].join("\n");
 }
 
+function normalizeIdentity(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function collectIdentityVariants(value) {
+  const normalized = normalizeIdentity(value);
+  if (!normalized) return [];
+  const variants = new Set([normalized]);
+  const withoutTrailingDigits = normalized.replace(/\d+$/u, "");
+  if (withoutTrailingDigits.length >= 3 && withoutTrailingDigits !== normalized) {
+    variants.add(withoutTrailingDigits);
+  }
+  return [...variants];
+}
+
+function getOwnIdentityNames() {
+  const identities = new Set();
+  [state.detectedMinecraftNickname, state.runtimeFingerprint?.nickname, state.profile.nickname].forEach((value) => {
+    collectIdentityVariants(value).forEach((variant) => identities.add(variant));
+  });
+  return identities;
+}
+
 function getTrackedMinecraftNames(peers) {
   const names = new Set();
-  const ownNames = [
-    state.detectedMinecraftNickname,
-    state.profile.nickname,
-  ].filter(Boolean);
-  ownNames.forEach((value) => names.add(String(value).trim().toLowerCase()));
+  getOwnIdentityNames().forEach((value) => names.add(value));
   peers.forEach((peer) => {
     const profile = state.peerProfiles.get(peer.peerId) ?? null;
     [profile?.minecraftNickname, profile?.nickname, peer.peerId].filter(Boolean).forEach((value) => {
-      names.add(String(value).trim().toLowerCase());
+      collectIdentityVariants(value).forEach((variant) => names.add(variant));
     });
   });
   return names;
@@ -598,7 +624,7 @@ function buildInferredPlayers(peers) {
   if (state.status?.mode !== "host") return [];
   const trackedNames = getTrackedMinecraftNames(peers);
   return (state.localWorldPlayers || [])
-    .filter((name) => !trackedNames.has(String(name).trim().toLowerCase()))
+    .filter((name) => !trackedNames.has(normalizeIdentity(name)))
     .map((name) => ({
       peerId: `minecraft:${name}`,
       addr: "minecraft-status",
@@ -729,10 +755,40 @@ function canAdvertiseHost() {
   return Boolean(
     hostSession.active &&
       hostSession.peerId &&
-      (advertisedEndpoint(hostSession.listenAddrs, hostSession.peerAddr) ||
-        hostSession.publicJoinAddress ||
-        hostSession.e4mcDomain),
+      (getAdvertisableJoinAddress() || advertisedEndpoint(hostSession.listenAddrs, hostSession.peerAddr)),
   );
+}
+
+function isE4mcVerified(status = state.status) {
+  return Boolean(status?.e4mcVerified ?? hostSession.e4mcVerified);
+}
+
+function getVisibleE4mcDomain(status = state.status) {
+  return hostSession.e4mcDomain ?? status?.e4mcDomain ?? null;
+}
+
+function getVerifiedPublicJoinAddress(status = state.status) {
+  if (!isE4mcVerified(status)) {
+    return status?.publicJoinAddress ?? hostSession.publicJoinAddress ?? null;
+  }
+  return hostSession.publicJoinAddress ?? status?.publicJoinAddress ?? getVisibleE4mcDomain(status) ?? null;
+}
+
+function getDirectAdvertisedEndpoint(status = state.status) {
+  const endpoint = advertisedEndpoint(hostSession.listenAddrs, hostSession.peerAddr);
+  return toSocketEndpoint(endpoint) ?? endpoint ?? status?.publicUdpAddr ?? status?.udpBindAddr ?? null;
+}
+
+function getAdvertisableJoinAddress(status = state.status) {
+  return getVerifiedPublicJoinAddress(status) ?? getDirectAdvertisedEndpoint(status);
+}
+
+function formatPrimaryEndpoint(status = state.status) {
+  const endpoint = getAdvertisableJoinAddress(status);
+  if (endpoint) return endpoint;
+  const domain = getVisibleE4mcDomain(status);
+  if (domain) return `${domain} (${t("e4mcPendingShort")})`;
+  return status?.publicUdpAddr ?? status?.udpBindAddr ?? "n/a";
 }
 
 function renderSelectedServer() {
@@ -804,10 +860,16 @@ function renderSessionCard() {
   const status = state.status;
   const mode = status?.mode ?? "idle";
   const version = status?.minecraftVersion ?? hostSession.minecraftVersion ?? t("serverUnknownVersion");
-  const publicJavaEndpoint = hostSession.publicJoinAddress ?? status?.publicJoinAddress ?? toSocketEndpoint(hostSession.peerAddr) ?? hostSession.peerAddr;
+  const publicJavaEndpoint = getAdvertisableJoinAddress(status);
   const hostBedrockEndpoint = deriveBedrockEndpoint(status?.publicUdpAddr, status?.bedrockPort);
   const online = Math.max(1, (status?.peerCount ?? 0) + 1);
   const maxPlayers = Math.max(online, hostSession.maxPlayers ?? 30);
+  const e4mcDomain = getVisibleE4mcDomain(status);
+  const e4mcLabel = e4mcDomain
+    ? isE4mcVerified(status)
+      ? t("hostCardE4mcReady", { domain: e4mcDomain })
+      : t("hostCardE4mcPending", { domain: e4mcDomain })
+    : null;
 
   if (mode === "client") {
     hostSectionTitleEl.textContent = t("clientSessionTitle");
@@ -855,8 +917,8 @@ function renderSessionCard() {
           <span class="host-meta-pill">${escapeHtml(t("hostCardPort", { port: hostSession.localPort }))}</span>
           <span class="host-meta-pill">${escapeHtml(hostSession.hasPassword ? t("hostCardPasswordOn") : t("hostCardPasswordOff"))}</span>
           ${
-            status?.e4mcDomain
-              ? `<span class="host-meta-pill">${escapeHtml(t("hostCardE4mc", { domain: status.e4mcDomain }))}</span>`
+            e4mcLabel
+              ? `<span class="host-meta-pill">${escapeHtml(e4mcLabel)}</span>`
               : ""
           }
           ${
@@ -977,7 +1039,7 @@ function renderServers() {
             : t("joinButton");
       const endpointText = isExternal
         ? server.joinAddress ?? (server.peerAddr ? toSocketEndpoint(server.peerAddr) ?? server.peerAddr : t("serverNoEndpoint"))
-        : server.peerAddr ?? t("serverNoEndpoint");
+        : server.publicJoinAddress ?? server.peerAddr ?? t("serverNoEndpoint");
 
       return `
         <article class="server-row ${isSelected ? "active" : ""}" data-select-server="${escapeHtml(server.clientId)}">
@@ -1059,6 +1121,7 @@ function hydrateServers(members) {
         Array.isArray(data.listen_addrs) ? data.listen_addrs.map(normalizeToMultiaddr).filter(Boolean) : [],
       );
       const endpoint = normalizeToMultiaddr(data.endpoint) ?? advertisedEndpoint(peerAddrs);
+      const e4mcVerified = Boolean(data.e4mc_verified ?? (data.e4mc_domain && data.public_join_address === data.e4mc_domain));
       return {
         clientId: member.clientId,
         roomName: data.room_name ?? "Unnamed room",
@@ -1072,7 +1135,8 @@ function hydrateServers(members) {
         minecraftVersion: data.minecraft_version ?? null,
         transport: data.transport ?? null,
         publicJoinAddress: data.public_join_address ?? data.socket_endpoint ?? null,
-        e4mcDomain: data.e4mc_domain ?? null,
+        e4mcDomain: e4mcVerified ? data.e4mc_domain ?? null : null,
+        e4mcVerified,
         geyserEnabled: Boolean(data.geyser_enabled),
         bedrockPort: data.bedrock_port ?? null,
         bedrockEndpoint: data.bedrock_endpoint ?? null,
@@ -1177,8 +1241,9 @@ async function addExternalServerFromModal(roomName) {
 function buildPresencePayload(status) {
   const endpoint = advertisedEndpoint(hostSession.listenAddrs, hostSession.peerAddr);
   const socketEndpoint = toSocketEndpoint(endpoint);
-  const publicJoinAddress = hostSession.publicJoinAddress ?? status?.publicJoinAddress ?? socketEndpoint ?? null;
-  const e4mcDomain = hostSession.e4mcDomain ?? status?.e4mcDomain ?? null;
+  const e4mcVerified = isE4mcVerified(status);
+  const publicJoinAddress = getAdvertisableJoinAddress(status);
+  const e4mcDomain = e4mcVerified ? getVisibleE4mcDomain(status) : null;
   const online = Math.max(1, (status?.peerCount ?? 0) + 1);
   const maxPlayers = Math.max(online, hostSession.maxPlayers ?? 30);
   return {
@@ -1196,6 +1261,7 @@ function buildPresencePayload(status) {
     socket_endpoint: socketEndpoint,
     public_join_address: publicJoinAddress,
     e4mc_domain: e4mcDomain,
+    e4mc_verified: e4mcVerified,
     peer_addr: hostSession.peerAddr,
     local_port: hostSession.localPort,
     minecraft_version: hostSession.minecraftVersion ?? status?.minecraftVersion ?? null,
@@ -1215,8 +1281,9 @@ function syncHostSessionFromStatus(status) {
       advertisedEndpoint(hostSession.listenAddrs, status.publicUdpAddr ?? status.udpBindAddr) ?? hostSession.peerAddr;
     hostSession.localPort = status.localGamePort ?? hostSession.localPort;
     hostSession.minecraftVersion = status.minecraftVersion ?? hostSession.minecraftVersion;
-    hostSession.publicJoinAddress = status.publicJoinAddress ?? hostSession.publicJoinAddress;
-    hostSession.e4mcDomain = status.e4mcDomain ?? hostSession.e4mcDomain;
+    hostSession.publicJoinAddress = status.publicJoinAddress ?? null;
+    hostSession.e4mcDomain = status.e4mcDomain ?? null;
+    hostSession.e4mcVerified = Boolean(status.e4mcVerified);
     return;
   }
   hostSession.active = false;
@@ -1226,6 +1293,7 @@ function syncHostSessionFromStatus(status) {
   hostSession.minecraftVersion = null;
   hostSession.publicJoinAddress = null;
   hostSession.e4mcDomain = null;
+  hostSession.e4mcVerified = false;
   hostSession.presenceEntered = false;
 }
 
@@ -1253,7 +1321,7 @@ function renderStatus(status) {
   connectionStateEl.textContent = formatState(status.state);
   connectionStateEl.dataset.state = status.state ?? "idle";
   ablyStateEl.textContent = state.realtime?.connection.state ?? "offline";
-  publicEndpointEl.textContent = status.publicJoinAddress ?? status.publicUdpAddr ?? status.udpBindAddr ?? "n/a";
+  publicEndpointEl.textContent = formatPrimaryEndpoint(status);
   sessionModeEl.textContent = formatMode(status.mode);
   currentVersionEl.textContent = status.minecraftVersion ?? t("serverUnknownVersion");
   statusNoteEl.textContent = decodeMojibakeIfNeeded(status.note ?? t("modeIdle"));
@@ -1559,8 +1627,9 @@ async function startHosting() {
     hostSession.peerAddr = advertisedEndpoint(hostSession.listenAddrs, status.publicUdpAddr ?? status.udpBindAddr);
     hostSession.localPort = localPort;
     hostSession.minecraftVersion = status.minecraftVersion ?? null;
-    hostSession.publicJoinAddress = status.publicJoinAddress ?? hostSession.publicJoinAddress;
-    hostSession.e4mcDomain = status.e4mcDomain ?? hostSession.e4mcDomain;
+    hostSession.publicJoinAddress = status.publicJoinAddress ?? null;
+    hostSession.e4mcDomain = status.e4mcDomain ?? null;
+    hostSession.e4mcVerified = Boolean(status.e4mcVerified);
     try {
       const localMeta = await invoke("query_external_server", { host: "127.0.0.1", port: localPort });
       if (localMeta?.roomName) {
@@ -1614,6 +1683,7 @@ async function stopSession() {
     hostSession.minecraftVersion = null;
     hostSession.publicJoinAddress = null;
     hostSession.e4mcDomain = null;
+    hostSession.e4mcVerified = false;
     hostSession.presencePayload = null;
     hostSession.presenceEntered = false;
     state.selectedServerId = null;
@@ -1833,9 +1903,14 @@ await listen("hole_punch_success", async (event) => {
 await listen("e4mc_domain_ready", async (event) => {
   const domain = String(event.payload?.domain ?? "").trim();
   if (!domain) return;
-  hostSession.publicJoinAddress = domain;
   hostSession.e4mcDomain = domain;
-  addLog(t("e4mcReadyLog", { domain }));
+  hostSession.e4mcVerified = Boolean(event.payload?.verified);
+  hostSession.publicJoinAddress = hostSession.e4mcVerified ? domain : null;
+  addLog(
+    hostSession.e4mcVerified
+      ? t("e4mcVerifiedLog", { domain })
+      : t("e4mcPendingLog", { domain, error: String(event.payload?.error ?? "verification pending") }),
+  );
   const status = await invoke("get_status");
   renderStatus(status);
   await syncPresence(status, { force: true, enter: !hostSession.presenceEntered });
@@ -1991,6 +2066,7 @@ renderSettingsOptions();
 syncPasswordField();
 syncGeyserField();
 syncExternalHostMode();
+ensureProfileMenuPortal();
 renderProfile();
 renderLogs();
 renderSelectedServer();

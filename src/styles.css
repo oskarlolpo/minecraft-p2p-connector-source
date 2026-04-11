@@ -923,7 +923,7 @@ body[data-theme="white"] .nav-button img {
   border-radius: 22px;
   background: var(--surface-strong);
   box-shadow: var(--shadow);
-  z-index: 10000;
+  z-index: 2147483647;
 }
 
 .selected-panel,
