@@ -19,7 +19,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tauri = { version = "2.0", features = ["wry"] }
 tokio = { version = "1.44", features = ["full"] }
-igd-next = "0.14.3"
+rupnp = "3.0"
 tokio-util = { version = "0.7", features = ["codec", "rt"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
@@ -27,3 +27,7 @@ uuid = { version = "1.15", features = ["serde", "v4"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 socket2 = "0.5"
+http = "1.0"
+bytes = "1.0"
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1"] }
+http-body-util = "0.1"
