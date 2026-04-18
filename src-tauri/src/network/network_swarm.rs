@@ -184,7 +184,7 @@ impl NetworkSwarmManager {
     ) -> Result<SwarmBootstrap> {
         let mut runtime_guard = self.runtime.lock().await;
         if runtime_guard.is_some() {
-            return Err(anyhow!("libp2p-СЃРµСЃСЃРёСЏ СѓР¶Рµ Р°РєС‚РёРІРЅР°"));
+            return Err(anyhow!("libp2p-СЃРµСЃСЃLog EntryЏ СѓР¶Рµ Р°РєС‚Log EntryІLog Entry°"));
         }
 
         let minecraft_version = detect_local_version(local_port).await.ok();
@@ -265,17 +265,17 @@ impl NetworkSwarmManager {
         peer_id: String,
         peer_addrs: Vec<String>,
     ) -> Result<()> {
-        let peer_id = PeerId::from_str(&peer_id).context("РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ PeerId")?;
+        let peer_id = PeerId::from_str(&peer_id).context("Log EntryµРєРѕСЂСЂРµРєС‚Log Entry")?;
         let addrs = peer_addrs
             .into_iter()
             .map(|value| {
                 normalize_multiaddr_input(&value)
-                    .with_context(|| format!("РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ multiaddr: {value}"))
+                    .with_context(|| format!("Log EntryµРєРѕСЂСЂРµРєС‚Log Entry: {value}"))
             })
             .collect::<Result<Vec<_>>>()?;
 
         if addrs.is_empty() {
-            return Err(anyhow!("РґР»СЏ РїРѕРґРєР»СЋС‡РµРЅРёСЏ РЅСѓР¶РµРЅ С…РѕС‚СЏ Р±С‹ РѕРґРёРЅ multiaddr"));
+            return Err(anyhow!("РґLog EntryЏ РїРѕРґРєLog EntryЋС‡РµLog EntryЏ Log Entry¶РµLog Entry…РѕС‚СЏ Log EntryѕРґLog Entry"));
         }
 
         let mut runtime_guard = self.runtime.lock().await;
@@ -307,11 +307,11 @@ impl NetworkSwarmManager {
 
         let runtime = runtime_guard
             .as_ref()
-            .context("runtime РЅРµ Р±С‹Р» СЃРѕР·РґР°РЅ")?;
+            .context("runtime Log Entryµ Log EntryЃРѕР·РґР°Log Entry")?;
 
         if runtime.mode == SessionMode::Host {
             return Err(anyhow!(
-                "РЅРµР»СЊР·СЏ dial'РёС‚СЊ СѓРґР°Р»С‘РЅРЅС‹Р№ peer, РїРѕРєР° Р·Р°РїСѓС‰РµРЅ Р»РѕРєР°Р»СЊРЅС‹Р№ С…РѕСЃС‚"
+                "Log EntryµLog EntryЊР·СЏ dial'Log Entry‚СЊ СѓРґР°Log Entry‘Log Entry, РїРѕРєР° Р·Р°РїСѓС‰РµLog EntryѕРєР°Log EntryЊLog Entry…РѕСЃС‚"
             ));
         }
 
@@ -380,21 +380,21 @@ impl NetworkSwarmManager {
     }
 
     pub async fn kick_peer(&self, peer_id: String) -> Result<()> {
-        let peer_id = PeerId::from_str(&peer_id).context("РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ PeerId")?;
+        let peer_id = PeerId::from_str(&peer_id).context("Log EntryµРєРѕСЂСЂРµРєС‚Log Entry")?;
         let runtime_guard = self.runtime.lock().await;
         let runtime = runtime_guard
             .as_ref()
-            .context("РЅРµС‚ Р°РєС‚РёРІРЅРѕР№ swarm-СЃРµСЃСЃРёРё")?;
+            .context("Log EntryµС‚ Р°РєС‚Log EntryІLog EntryѕLog Entry-СЃРµСЃСЃLog Entry")?;
 
         if runtime.mode != SessionMode::Host {
-            return Err(anyhow!("kick_peer РґРѕСЃС‚СѓРїРµРЅ С‚РѕР»СЊРєРѕ РґР»СЏ С…РѕСЃС‚Р°"));
+            return Err(anyhow!("kick_peer РґРѕСЃС‚СѓРїРµLog Entry‚РѕLog EntryЊРєРѕ РґLog EntryЏ С…РѕСЃС‚Р°"));
         }
 
         runtime
             .command_tx
             .send(SwarmCommand::KickPeer { peer_id })
             .await
-            .context("РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ РєРѕРјР°РЅРґСѓ disconnect_peer_id")?;
+            .context("Log Entryµ СѓРґР°Log EntryѕСЃСЊ РѕС‚РїСЂР°РІLog Entry‚СЊ РєРѕРјР°Log EntryґСѓ disconnect_peer_id")?;
 
         Ok(())
     }
@@ -425,13 +425,13 @@ async fn spawn_swarm_runtime(
         push_log(
             &mut status_guard,
             format!(
-                "Р—Р°РіСЂСѓР¶РµРЅРѕ {} relay bootstrap-СѓР·Р»РѕРІ РґР»СЏ Circuit Relay v2.",
+                "Р—Р°РіСЂСѓР¶РµLog Entryѕ {} relay bootstrap-СѓР·Log EntryѕРІ РґLog EntryЏ Circuit Relay v2.",
                 relay_addr_strings.len()
             ),
         );
         push_log(
             &mut status_guard,
-            "DNS resolver РїРµСЂРµРєР»СЋС‡РµРЅ РЅР° Google Public DNS (8.8.8.8 / 8.8.4.4), С‡С‚РѕР±С‹ РЅРµ Р·Р°РІРёСЃРµС‚СЊ РѕС‚ DNS РїСЂРѕРІР°Р№РґРµСЂР°.",
+            "DNS resolver РїРµСЂРµРєLog EntryЋС‡РµLog Entry° Google Public DNS (8.8.8.8 / 8.8.4.4), С‡С‚РѕLog Entryµ Р·Р°РІLog EntryЃРµС‚СЊ РѕС‚ DNS РїСЂРѕРІР°Log EntryґРµСЂР°.",
         );
     }
 
@@ -450,7 +450,7 @@ async fn spawn_swarm_runtime(
 
     swarm
         .listen_on("/ip4/0.0.0.0/tcp/0".parse()?)
-        .context("РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ libp2p TCP listener")?;
+        .context("Log Entryµ СѓРґР°Log EntryѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ libp2p TCP listener")?;
     let initial_listen_addrs = current_listen_addrs(&swarm);
 
     let cancel = CancellationToken::new();
@@ -462,13 +462,13 @@ async fn spawn_swarm_runtime(
     if config.mode == SessionMode::Host {
         let incoming = stream_control
             .accept(StreamProtocol::new(MINECRAFT_STREAM_PROTOCOL))
-            .context("РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°С‚СЊ inbound stream handler")?;
+            .context("Log Entryµ СѓРґР°Log EntryѕСЃСЊ Р·Р°СЂРµРіLog EntryЃС‚СЂLog EntryЂРѕРІР°С‚СЊ inbound stream handler")?;
         let app_handle = app.clone();
         let status_handle = status.clone();
         let cancel_handle = cancel.clone();
         let local_port = config
             .host_local_port
-            .context("РґР»СЏ host mode РѕР±СЏР·Р°С‚РµР»РµРЅ Р»РѕРєР°Р»СЊРЅС‹Р№ РїРѕСЂС‚ Minecraft")?;
+            .context("РґLog EntryЏ host mode РѕLog EntryЏР·Р°С‚РµLog EntryµLog EntryѕРєР°Log EntryЊLog EntryїРѕСЂС‚ Minecraft")?;
         handles.push(tokio::spawn(async move {
             run_host_stream_acceptor(app_handle, status_handle, cancel_handle, incoming, local_port)
                 .await;
@@ -605,7 +605,7 @@ async fn run_swarm_actor(
         )
         .await
         {
-            log_status(&status, format!("РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°СЂР°РЅРµРµ Р·Р°РїСЂРѕСЃРёС‚СЊ relay reservation: {error:#}"))
+            log_status(&status, format!("РќРµ СѓРґР°Log EntryѕСЃСЊ Р·Р°СЂР°Log EntryµРµ Р·Р°РїСЂРѕСЃLog Entry‚СЊ relay reservation: {error:#}"))
                 .await;
         }
     }
@@ -623,15 +623,15 @@ async fn run_swarm_actor(
         status_guard.password_protected = config.password_protected;
         status_guard.note = Some(match config.mode {
             SessionMode::Host => format!(
-                "РҐРѕСЃС‚ \"{}\" Р°РєС‚РёРІРµРЅ. Swarm РёСЃРїРѕР»СЊР·СѓРµС‚ TCP + WSS/443 relay transport. РџСѓР±Р»РёРєСѓР№С‚Рµ PeerId Рё Multiaddr РІ Ably.",
+                "РҐРѕСЃС‚ \"{}\" Р°РєС‚Log EntryІРµLog Entry. Swarm Log EntryЃРїРѕLog EntryЊР·СѓРµС‚ TCP + WSS/443 relay transport. РџСѓLog EntryєСѓLog Entry‚Рµ PeerId Log EntryІ Ably.",
                 config
                     .room_name
                     .as_deref()
-                    .unwrap_or("Р‘РµР·С‹РјСЏРЅРЅР°СЏ РєРѕРјРЅР°С‚Р°")
+                    .unwrap_or("Р‘РµР·С‹РјСЏLog Entry°СЏ РєРѕРјLog Entry°С‚Р°")
             ),
             SessionMode::Client => {
                 format!(
-                    "Swarm РіРѕС‚РѕРІ. Minecraft-РєР»РёРµРЅС‚ РґРѕР»Р¶РµРЅ РїРѕРґРєР»СЋС‡Р°С‚СЊСЃСЏ Рє {}.",
+                    "Swarm РіРѕС‚РѕРІ. Minecraft-РєLog EntryµLog Entry‚ РґРѕLog Entry¶РµLog EntryїРѕРґРєLog EntryЋС‡Р°С‚СЊСЃСЏ Рє {}.",
                     CLIENT_LOCAL_BIND_ADDR
                 )
             }
@@ -698,7 +698,7 @@ async fn run_swarm_actor(
                             &status,
                             command,
                         ).await {
-                            log_status(&status, format!("РљРѕРјР°РЅРґР° swarm Р·Р°РІРµСЂС€РёР»Р°СЃСЊ РѕС€РёР±РєРѕР№: {error:#}")).await;
+                            log_status(&status, format!("РљРѕРјР°Log EntryґР° swarm Р·Р°РІРµСЂС€Log Entry°СЃСЊ РѕС€Log EntryєРѕLog Entry: {error:#}")).await;
                         }
                     }
                     None => break,
@@ -716,7 +716,7 @@ async fn run_swarm_actor(
                     &mut ready_tx,
                     event,
                 ).await {
-                    log_status(&status, format!("РћС€РёР±РєР° РѕР±СЂР°Р±РѕС‚РєРё SwarmEvent: {error:#}")).await;
+                    log_status(&status, format!("РћС€Log EntryєР° РѕLog EntryЂР°Log EntryѕС‚РєLog Entry: {error:#}")).await;
                 }
             }
         }
@@ -745,23 +745,23 @@ async fn handle_swarm_command(
 
             swarm
                 .dial(opts)
-                .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ dial'РёС‚СЊ peer {peer_id}"))?;
+                .with_context(|| format!("Log Entryµ СѓРґР°Log EntryѕСЃСЊ dial'Log Entry‚СЊ peer {peer_id}"))?;
 
             let mut status_guard = status.write().await;
             status_guard.state = ConnectionState::Connecting;
             push_log(
                 &mut status_guard,
-                format!("Dial РЅР°С‡Р°С‚ РґР»СЏ peer {peer_id} С‡РµСЂРµР· {} Р°РґСЂРµСЃ(Р°).", addrs.len()),
+                format!("Dial Log Entry°С‡Р°С‚ РґLog EntryЏ peer {peer_id} С‡РµСЂРµР· {} Р°РґСЂРµСЃ(Р°).", addrs.len()),
             );
         }
         SwarmCommand::KickPeer { peer_id } => {
             swarm
                 .disconnect_peer_id(peer_id)
-                .map_err(|_| anyhow!("peer {peer_id} РЅРµ РїРѕРґРєР»СЋС‡С‘РЅ"))?;
+                .map_err(|_| anyhow!("peer {peer_id} Log Entryµ РїРѕРґРєLog EntryЋС‡С‘Log Entry"))?;
             let mut status_guard = status.write().await;
             push_log(
                 &mut status_guard,
-                format!("Peer {peer_id} РѕС‚РєР»СЋС‡С‘РЅ С‡РµСЂРµР· disconnect_peer_id()."),
+                format!("Peer {peer_id} РѕС‚РєLog EntryЋС‡С‘Log EntryµСЂРµР· disconnect_peer_id()."),
             );
         }
     }
@@ -790,7 +790,7 @@ async fn handle_swarm_event(
                 status_guard.transport_path = Some("relay-reservation".into());
                 push_log(
                     &mut status_guard,
-                    format!("Relay reservation Р°РєС‚РёРІРµРЅ: {address_string}"),
+                    format!("Relay reservation Р°РєС‚Log EntryІРµLog Entry: {address_string}"),
                 );
                 let _ = app.emit(
                     "relay_active",
@@ -801,7 +801,7 @@ async fn handle_swarm_event(
             } else {
                 push_log(
                     &mut status_guard,
-                    format!("Swarm СЃР»СѓС€Р°РµС‚ РЅР° {address_string}"),
+                    format!("Swarm СЃLog Entry€Р°РµС‚ Log Entry° {address_string}"),
                 );
             }
 
@@ -826,7 +826,7 @@ async fn handle_swarm_event(
             status_guard.public_udp_addr = Some(address.to_string());
             push_log(
                 &mut status_guard,
-                format!("РџРѕРґС‚РІРµСЂР¶РґС‘РЅ РІРЅРµС€РЅРёР№ Р°РґСЂРµСЃ swarm: {address}"),
+                format!("РџРѕРґС‚РІРµСЂР¶РґС‘Log EntryІLog EntryµС€Log Entry°РґСЂРµСЃ swarm: {address}"),
             );
         }
         SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
@@ -837,7 +837,7 @@ async fn handle_swarm_event(
                 let mut status_guard = status.write().await;
                 push_log(
                     &mut status_guard,
-                    format!("РџРѕРґРєР»СЋС‡С‘РЅ relay bootstrap {peer_id} С‡РµСЂРµР· {addr}"),
+                    format!("РџРѕРґРєLog EntryЋС‡С‘Log Entry{peer_id} С‡РµСЂРµР· {addr}"),
                 );
                 if relayed {
                     let _ = app.emit(
@@ -862,16 +862,16 @@ async fn handle_swarm_event(
                 });
                 status_guard.note = Some(if config.mode == SessionMode::Client {
                     format!(
-                        "РўСѓРЅРЅРµР»СЊ Р°РєС‚РёРІРµРЅ. РџРѕРґРєР»СЋС‡Р°Р№С‚РµСЃСЊ РІ Minecraft Рє {}.",
+                        "РўСѓLog EntryµLog EntryЊ Р°РєС‚Log EntryІРµLog Entry. РџРѕРґРєLog EntryЋС‡Р°Log Entry‚РµСЃСЊ РІ Minecraft Рє {}.",
                         CLIENT_LOCAL_BIND_ADDR
                     )
                 } else {
-                    "Peer РїРѕРґРєР»СЋС‡С‘РЅ Рє РІР°С€РµРјСѓ С…РѕСЃС‚Сѓ С‡РµСЂРµР· libp2p stream.".into()
+                    "Peer РїРѕРґРєLog EntryЋС‡С‘Log Entryє РІР°С€РµРјСѓ С…РѕСЃС‚Сѓ С‡РµСЂРµР· libp2p stream.".into()
                 });
                 push_log(
                     &mut status_guard,
                     format!(
-                        "Peer {peer_id} РїРѕРґРєР»СЋС‡С‘РЅ С‡РµСЂРµР· {} ({addr})",
+                        "Peer {peer_id} РїРѕРґРєLog EntryЋС‡С‘Log EntryµСЂРµР· {} ({addr})",
                         if relayed { "relay" } else { "direct" }
                     ),
                 );
@@ -897,7 +897,7 @@ async fn handle_swarm_event(
                 push_log(
                     &mut status_guard,
                     format!(
-                        "РЎРѕРµРґРёРЅРµРЅРёРµ СЃ peer {peer_id} Р·Р°РєСЂС‹С‚Рѕ{}",
+                        "РЎРѕРµРґLog EntryµLog Entryµ СЃ peer {peer_id} Р·Р°РєСЂС‹С‚Рѕ{}",
                         cause
                             .as_ref()
                             .map(|error| format!(": {error}"))
@@ -946,7 +946,7 @@ async fn handle_swarm_event(
                 status_guard.note = Some(format!("AutoNAT: {}", nat_status_label(&new)));
                 push_log(
                     &mut status_guard,
-                    format!("AutoNAT СЃС‚Р°С‚СѓСЃ РёР·РјРµРЅРёР»СЃСЏ: {}", nat_status_label(&new)),
+                    format!("AutoNAT СЃС‚Р°С‚СѓСЃ Log Entry·РјРµLog EntryЃСЏ: {}", nat_status_label(&new)),
                 );
                 if let autonat::NatStatus::Public(addr) = &new {
                     status_guard.public_udp_addr = Some(addr.to_string());
@@ -965,7 +965,7 @@ async fn handle_swarm_event(
                         status_guard.transport_path = Some("direct-hole-punch".into());
                         push_log(
                             &mut status_guard,
-                            format!("DCUtR hole punch СѓСЃРїРµС€РµРЅ РґР»СЏ peer {}.", event.remote_peer_id),
+                            format!("DCUtR hole punch СѓСЃРїРµС€РµLog EntryґLog EntryЏ peer {}.", event.remote_peer_id),
                         );
                     }
                     let _ = app.emit(
@@ -978,7 +978,7 @@ async fn handle_swarm_event(
                 Err(error) => {
                     log_status(
                         status,
-                        format!("DCUtR hole punch РґР»СЏ {} РЅРµ СѓРґР°Р»СЃСЏ: {error}", event.remote_peer_id),
+                        format!("DCUtR hole punch РґLog EntryЏ {} Log Entryµ СѓРґР°Log EntryЃСЏ: {error}", event.remote_peer_id),
                     )
                     .await;
                 }
@@ -992,7 +992,7 @@ async fn handle_swarm_event(
             for addr in info.listen_addrs {
                 swarm.add_peer_address(peer_id, addr);
             }
-            log_status(status, format!("РџРѕР»СѓС‡РµРЅ identify РѕС‚ peer {peer_id}.")).await;
+            log_status(status, format!("РџРѕLog EntryµLog EntryѕС‚ peer {peer_id}.")).await;
         }
         SwarmEvent::Behaviour(ConnectorEvent::Relay(event)) => {
             log_status(status, format!("Relay client event: {event:?}")).await;
@@ -1020,20 +1020,20 @@ async fn ensure_relay_reservations(
 
         swarm
             .dial(relay_addr.clone())
-            .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ dial'РёС‚СЊ relay {relay_addr}"))?;
+            .with_context(|| format!("Log Entryµ СѓРґР°Log EntryѕСЃСЊ dial'Log Entry‚СЊ relay {relay_addr}"))?;
 
         let mut reservation_addr = relay_addr.clone();
         reservation_addr.push(Protocol::P2pCircuit);
         swarm
             .listen_on(reservation_addr.clone())
-            .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїСЂРѕСЃРёС‚СЊ reservation С‡РµСЂРµР· {relay_addr}"))?;
+            .with_context(|| format!("Log Entryµ СѓРґР°Log EntryѕСЃСЊ Р·Р°РїСЂРѕСЃLog Entry‚СЊ reservation С‡РµСЂРµР· {relay_addr}"))?;
 
         relay_reservations.insert(relay_key.clone());
 
         let mut status_guard = status.write().await;
         push_log(
             &mut status_guard,
-            format!("Р—Р°РїСЂРѕС€РµРЅ Circuit Relay reservation С‡РµСЂРµР· {relay_key}"),
+            format!("Р—Р°РїСЂРѕС€РµLog EntryµСЂРµР· {relay_key}"),
         );
     }
 
@@ -1071,7 +1071,7 @@ async fn start_host_reverse_tunnel(
         cancel.clone(),
     )
     .await
-    .context("РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ Bore-compatible reverse tunnel")?;
+    .context("Log Entryµ СѓРґР°Log EntryѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ Bore-compatible reverse tunnel")?;
 
     let endpoint = handle.endpoint().clone();
     let socket_label = endpoint.as_socket_label();
@@ -1138,7 +1138,7 @@ async fn run_host_stream_acceptor(
                     if let Err(error) = pipe_inbound_minecraft_stream(stream, local_game_port).await {
                         log_status(
                             &status_handle,
-                            format!("Inbound stream РѕС‚ {peer_id} Р·Р°РІРµСЂС€РёР»СЃСЏ РѕС€РёР±РєРѕР№: {error:#}"),
+                            format!("Inbound stream РѕС‚ {peer_id} Р·Р°РІРµСЂС€Log EntryЃСЏ РѕС€Log EntryєРѕLog Entry: {error:#}"),
                         )
                         .await;
                     } else {
@@ -1169,7 +1169,7 @@ async fn run_client_proxy_listener(
         Err(error) => {
             log_status(
                 &status,
-                format!("РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ Р»РѕРєР°Р»СЊРЅС‹Р№ Minecraft proxy РЅР° {CLIENT_LOCAL_BIND_ADDR}: {error}"),
+                format!("РќРµ СѓРґР°Log EntryѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ Log EntryѕРєР°Log EntryЊLog Entry° {CLIENT_LOCAL_BIND_ADDR}: {error}"),
             )
             .await;
             return;
@@ -1178,7 +1178,7 @@ async fn run_client_proxy_listener(
 
     log_status(
         &status,
-        format!("Р›РѕРєР°Р»СЊРЅС‹Р№ Minecraft proxy СЃР»СѓС€Р°РµС‚ РЅР° {CLIENT_LOCAL_BIND_ADDR}"),
+        format!("Р›РѕРєР°Log EntryЊLog EntryЃLog Entry€Р°РµС‚ Log Entry° {CLIENT_LOCAL_BIND_ADDR}"),
     )
     .await;
 
@@ -1192,7 +1192,7 @@ async fn run_client_proxy_listener(
                         let Some(route) = current_route else {
                             log_status(
                                 &status,
-                                format!("Minecraft TCP-РєР»РёРµРЅС‚ {addr} РїРѕРґРєР»СЋС‡РёР»СЃСЏ СЂР°РЅСЊС€Рµ, С‡РµРј РІС‹Р±СЂР°РЅ remote peer."),
+                                format!("Minecraft TCP-РєLog EntryµLog Entry‚ {addr} РїРѕРґРєLog EntryЋС‡Log EntryЃСЏ СЂР°Log EntryЊС€Рµ, С‡РµРј РІС‹Log EntryЂР°Log Entry."),
                             )
                             .await;
                             continue;
@@ -1206,7 +1206,7 @@ async fn run_client_proxy_listener(
                                     if let Err(error) = open_and_pipe_outbound_stream(control, peer_id, tcp_stream).await {
                                         log_status(
                                             &status_handle,
-                                            format!("РћС€РёР±РєР° outbound /mc-p2p/1.0.0 РґР»СЏ {peer_id}: {error:#}"),
+                                            format!("РћС€Log EntryєР° outbound /mc-p2p/1.0.0 РґLog EntryЏ {peer_id}: {error:#}"),
                                         )
                                         .await;
                                     }
@@ -1222,7 +1222,7 @@ async fn run_client_proxy_listener(
                                         log_status(
                                             &status_handle,
                                             format!(
-                                                "РћС€РёР±РєР° reverse tunnel client bridge РґР»СЏ {}: {error:#}",
+                                                "РћС€Log EntryєР° reverse tunnel client bridge РґLog EntryЏ {}: {error:#}",
                                                 endpoint.as_socket_label()
                                             ),
                                         )
@@ -1234,7 +1234,7 @@ async fn run_client_proxy_listener(
                         });
                     }
                     Err(error) => {
-                        log_status(&status, format!("РћС€РёР±РєР° accept() РЅР° Р»РѕРєР°Р»СЊРЅРѕРј proxy: {error}")).await;
+                        log_status(&status, format!("РћС€Log EntryєР° accept() Log Entry° Log EntryѕРєР°Log EntryЊLog EntryѕРј proxy: {error}")).await;
                     }
                 }
             }
@@ -1250,11 +1250,11 @@ async fn open_and_pipe_outbound_stream(
     let stream = stream_control
         .open_stream(peer_id, StreamProtocol::new(MINECRAFT_STREAM_PROTOCOL))
         .await
-        .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ libp2p stream Рє {peer_id}"))?;
+        .with_context(|| format!("Log Entryµ СѓРґР°Log EntryѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ libp2p stream Рє {peer_id}"))?;
 
     pipe_bidirectional(tcp_stream, stream)
         .await
-        .with_context(|| format!("copy_bidirectional Рє {peer_id} Р·Р°РІРµСЂС€РёР»СЃСЏ РѕС€РёР±РєРѕР№"))?;
+        .with_context(|| format!("copy_bidirectional Рє {peer_id} Р·Р°РІРµСЂС€Log EntryЃСЏ РѕС€Log EntryєРѕLog Entry"))?;
 
     Ok(())
 }
@@ -1263,11 +1263,11 @@ async fn pipe_inbound_minecraft_stream(stream: Stream, local_game_port: u16) -> 
     let target = format!("127.0.0.1:{local_game_port}");
     let tcp_stream = TcpStream::connect(&target)
         .await
-        .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ РїРѕРґРєР»СЋС‡РёС‚СЊСЃСЏ Рє Р»РѕРєР°Р»СЊРЅРѕРјСѓ Minecraft РЅР° {target}"))?;
+        .with_context(|| format!("Log Entryµ СѓРґР°Log EntryѕСЃСЊ РїРѕРґРєLog EntryЋС‡Log Entry‚СЊСЃСЏ Рє Log EntryѕРєР°Log EntryЊLog EntryѕРјСѓ Minecraft Log Entry° {target}"))?;
 
     pipe_bidirectional(tcp_stream, stream)
         .await
-        .with_context(|| format!("bridge РЅР° Р»РѕРєР°Р»СЊРЅС‹Р№ Minecraft {target} Р·Р°РІРµСЂС€РёР»СЃСЏ РѕС€РёР±РєРѕР№"))?;
+        .with_context(|| format!("bridge Log Entry° Log EntryѕРєР°Log EntryЊLog Entry{target} Р·Р°РІРµСЂС€Log EntryЃСЏ РѕС€Log EntryєРѕLog Entry"))?;
 
     Ok(())
 }
@@ -1393,7 +1393,7 @@ fn load_relay_bootstraps() -> Result<Vec<Multiaddr>> {
         .map(|entry| {
             entry
                 .parse::<Multiaddr>()
-                .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ СЂР°СЃРїР°СЂСЃРёС‚СЊ relay multiaddr: {entry}"))
+                .with_context(|| format!("Log Entryµ СѓРґР°Log EntryѕСЃСЊ СЂР°СЃРїР°СЂСЃLog Entry‚СЊ relay multiaddr: {entry}"))
         })
         .collect()
 }
@@ -1430,30 +1430,30 @@ fn reverse_tunnel_target_from_addrs(addrs: &[Multiaddr]) -> Option<ReverseTunnel
 fn normalize_multiaddr_input(value: &str) -> Result<Multiaddr> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(anyhow!("РїСѓСЃС‚РѕР№ Р°РґСЂРµСЃ"));
+        return Err(anyhow!("РїСѓСЃС‚РѕLog Entry°РґСЂРµСЃ"));
     }
 
     if trimmed.starts_with('/') {
         return trimmed
             .parse::<Multiaddr>()
-            .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ СЂР°СЃРїР°СЂСЃРёС‚СЊ multiaddr: {trimmed}"));
+            .with_context(|| format!("Log Entryµ СѓРґР°Log EntryѕСЃСЊ СЂР°СЃРїР°СЂСЃLog Entry‚СЊ multiaddr: {trimmed}"));
     }
 
     let (host, port) = split_host_port(trimmed)
-        .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ СЂР°Р·РѕР±СЂР°С‚СЊ host:port Р°РґСЂРµСЃ: {trimmed}"))?;
+        .with_context(|| format!("Log Entryµ СѓРґР°Log EntryѕСЃСЊ СЂР°Р·РѕLog EntryЂР°С‚СЊ host:port Р°РґСЂРµСЃ: {trimmed}"))?;
     let multiaddr = socket_label_to_multiaddr(&host, port);
     multiaddr
         .parse::<Multiaddr>()
-        .with_context(|| format!("РЅРµ СѓРґР°Р»РѕСЃСЊ РїСЂРµРѕР±СЂР°Р·РѕРІР°С‚СЊ РІ multiaddr: {multiaddr}"))
+        .with_context(|| format!("Log Entryµ СѓРґР°Log EntryѕСЃСЊ РїСЂРµРѕLog EntryЂР°Р·РѕРІР°С‚СЊ РІ multiaddr: {multiaddr}"))
 }
 
 fn split_host_port(value: &str) -> Result<(String, u16)> {
     let (host, port_str) = value
         .rsplit_once(':')
-        .ok_or_else(|| anyhow!("РѕР¶РёРґР°РµС‚СЃСЏ С„РѕСЂРјР°С‚ host:port"))?;
+        .ok_or_else(|| anyhow!("РѕР¶Log EntryґР°РµС‚СЃСЏ С„РѕСЂРјР°С‚ host:port"))?;
     let port = port_str
         .parse::<u16>()
-        .with_context(|| format!("РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ РїРѕСЂС‚: {port_str}"))?;
+        .with_context(|| format!("Log EntryµРєРѕСЂСЂРµРєС‚Log EntryїРѕСЂС‚: {port_str}"))?;
     Ok((host.trim_matches(&['[', ']'][..]).to_string(), port))
 }
 

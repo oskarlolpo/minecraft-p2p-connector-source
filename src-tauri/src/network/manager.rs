@@ -115,7 +115,7 @@ impl NetworkManager {
             signaling_server: ABLY_SIGNAL_LABEL.into(),
             ..Default::default()
         };
-        status.logs.push("Minecraft P2P Connector Р·Р°РїСѓС‰РµРЅ.".into());
+        status.logs.push("Minecraft P2P Connector started.".into());
 
         Self {
             inner: Arc::new(Inner {
@@ -151,10 +151,10 @@ impl NetworkManager {
     ) -> Result<String> {
         let room_name = room_name.trim().to_string();
         if room_name.is_empty() {
-            return Err(anyhow!("РёРјСЏ РєРѕРјРЅР°С‚С‹ РЅРµ РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј"));
+            return Err(anyhow!("room name must not be empty"));
         }
         if local_port == 0 {
-            return Err(anyhow!("РїРѕСЂС‚ Р»РѕРєР°Р»СЊРЅРѕР№ РёРіСЂС‹ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ Р±РѕР»СЊС€Рµ 0"));
+            return Err(anyhow!("local game port must be > 0"));
         }
 
         let _guard = self.inner.control.lock().await;
@@ -175,7 +175,7 @@ impl NetworkManager {
     pub async fn stop_hosting(&self) -> Result<()> {
         let _guard = self.inner.control.lock().await;
         self.reset_session().await;
-        self.push_log("РЎРµСЃСЃРёСЏ РѕСЃС‚Р°РЅРѕРІР»РµРЅР°.".into()).await;
+        self.push_log("Session stopped.".into()).await;
         Ok(())
     }
 
@@ -188,12 +188,12 @@ impl NetworkManager {
     ) -> Result<()> {
         let peer_addr = peer_addr.trim().to_string();
         if peer_addr.is_empty() {
-            return Err(anyhow!("Р°РґСЂРµСЃ peer РЅРµ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј"));
+            return Err(anyhow!("peer address must not be empty"));
         }
 
         let peer_addr: SocketAddr = peer_addr
             .parse()
-            .with_context(|| format!("РЅРµРІРµСЂРЅС‹Р№ socket address: {peer_addr}"))?;
+            .with_context(|| format!("invalid socket address: {peer_addr}"))?;
 
         let _guard = self.inner.control.lock().await;
 
@@ -221,12 +221,12 @@ impl NetworkManager {
     ) -> Result<()> {
         let peer_addr = peer_addr.trim().to_string();
         if peer_addr.is_empty() {
-            return Err(anyhow!("Р°РґСЂРµСЃ peer РЅРµ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј"));
+            return Err(anyhow!("peer address must not be empty"));
         }
 
         let peer_addr: SocketAddr = peer_addr
             .parse()
-            .with_context(|| format!("РЅРµРІРµСЂРЅС‹Р№ socket address: {peer_addr}"))?;
+            .with_context(|| format!("invalid socket address: {peer_addr}"))?;
         let peer_id = peer_id.unwrap_or_else(|| peer_addr.to_string());
 
         let _guard = self.inner.control.lock().await;
@@ -244,7 +244,7 @@ impl NetworkManager {
             public_udp_addr: Some(public_udp_addr.to_string()),
             signaling_server: ABLY_SIGNAL_LABEL.into(),
             note: Some(
-                "РљР»РёРµРЅС‚СЃРєРёР№ UDP endpoint РїРѕРґРіРѕС‚РѕРІР»РµРЅ. Р–РґСѓ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ relay РѕС‚ С…РѕСЃС‚Р°.".into(),
+                "Client UDP endpoint prepared. Waiting for relay ack from host.".into(),
             ),
             peers: vec![PeerInfo {
                 peer_id: peer_id.clone(),
@@ -341,10 +341,10 @@ impl NetworkManager {
             let session = self.inner.session.lock().await;
             let runtime = session
                 .as_ref()
-                .ok_or_else(|| anyhow!("Р°РєС‚РёРІРЅРѕР№ СЃРµСЃСЃРёРё РЅРµС‚"))?;
+                .ok_or_else(|| anyhow!("Р°РєС‚Log EntryІLog EntryѕLog EntryЃРµСЃСЃLog EntryµС‚"))?;
 
             let SessionControl::Host(host) = &runtime.control else {
-                return Err(anyhow!("РІС‹РіРЅР°С‚СЊ РёРіСЂРѕРєР° РјРѕР¶РЅРѕ С‚РѕР»СЊРєРѕ РёР· СЂРµР¶РёРјР° С…РѕСЃС‚Р°"));
+                return Err(anyhow!("РІС‹РіLog Entry°С‚СЊ Log EntryіСЂРѕРєР° РјРѕР¶Log Entryѕ С‚РѕLog EntryЊРєРѕ Log Entry· СЂРµР¶Log EntryјР° С…РѕСЃС‚Р°"));
             };
 
             host.live_connections.clone()
@@ -352,12 +352,12 @@ impl NetworkManager {
 
         let connection = live_connections.lock().await.remove(&peer_id);
         let Some(connection) = connection else {
-            return Err(anyhow!("РёРіСЂРѕРє {peer_id} РЅРµ РЅР°Р№РґРµРЅ СЃСЂРµРґРё Р°РєС‚РёРІРЅС‹С… РїРѕРґРєР»СЋС‡РµРЅРёР№"));
+            return Err(anyhow!("Log EntryіСЂРѕРє {peer_id} Log Entryµ Log Entry°Log EntryґРµLog EntryЃСЂРµРґLog Entry°РєС‚Log EntryІLog Entry… РїРѕРґРєLog EntryЋС‡РµLog Entry"));
         };
 
         connection.close(VarInt::from_u32(1), b"kicked-by-host");
         self.mark_peer_disconnected(&peer_id).await;
-        self.push_log(format!("РРіСЂРѕРє {peer_id} РѕС‚РєР»СЋС‡С‘РЅ С…РѕСЃС‚РѕРј."))
+        self.push_log(format!("РРіСЂРѕРє {peer_id} РѕС‚РєLog EntryЋС‡С‘Log Entry…РѕСЃС‚РѕРј."))
             .await;
         Ok(())
     }
@@ -388,8 +388,8 @@ impl NetworkManager {
             local_game_port: Some(local_port),
             password_protected: has_password,
             signaling_server: ABLY_SIGNAL_LABEL.into(),
-            note: Some("РџРѕРґРЅРёРјР°СЋ host endpoint Рё Р·Р°РїСЂР°С€РёРІР°СЋ Р»РѕРєР°Р»СЊРЅСѓСЋ РІРµСЂСЃРёСЋ Minecraft.".into()),
-            logs: vec![format!("Host СЃС‚Р°СЂС‚СѓРµС‚: {room_name}")],
+            note: Some("Starting host endpoint and detecting local Minecraft version.".into()),
+            logs: vec![format!("Host starting: {room_name}")],
             ..Default::default()
         })
         .await;
@@ -398,7 +398,7 @@ impl NetworkManager {
             Ok(version) => Some(version),
             Err(error) => {
                 self.push_log(format!(
-                    "РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РІРµСЂСЃРёСЋ Minecraft РЅР° 127.0.0.1:{local_port}: {error:#}"
+                    "Failed to detect Minecraft version on 127.0.0.1:{local_port}: {error:#}"
                 ))
                 .await;
                 None
@@ -414,7 +414,7 @@ impl NetworkManager {
             udp_socket,
             Arc::new(quinn::TokioRuntime),
         )
-        .context("РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ host QUIC endpoint")?;
+        .context("failed to create host QUIC endpoint")?;
 
         self.overwrite_status(NetworkStatus {
             mode: SessionMode::Host,
@@ -427,14 +427,14 @@ impl NetworkManager {
             password_protected: has_password,
             signaling_server: ABLY_SIGNAL_LABEL.into(),
             note: Some(format!(
-                "РҐРѕСЃС‚ Р°РєС‚РёРІРµРЅ. РљРѕРјРЅР°С‚Р°: {room_name}. Р›РѕРєР°Р»СЊРЅС‹Р№ РїРѕСЂС‚: {local_port}. Р’РµСЂСЃРёСЏ: {}.",
+                "Host active. Room: {room_name}. Local port: {local_port}. Version: {}.",
                 minecraft_version
                     .clone()
-                    .unwrap_or_else(|| "РќРµРёР·РІРµСЃС‚РЅРѕ".into())
+                    .unwrap_or_else(|| "Unknown".into())
             )),
             logs: vec![
-                format!("РџСѓР±Р»РёС‡РЅС‹Р№ UDP Р°РґСЂРµСЃ: {public_udp_addr}"),
-                format!("Р›РѕРєР°Р»СЊРЅС‹Р№ bind: {udp_bind_addr}"),
+                format!("Public UDP Address: {public_udp_addr}"),
+                format!("Local bind: {udp_bind_addr}"),
                 format!("Host forwards to {}", proxy::minecraft_local_addr(local_port)),
             ],
             ..Default::default()
@@ -506,7 +506,7 @@ impl NetworkManager {
         self.mutate_status(|status| {
             status.state = ConnectionState::Punching;
             status.note = Some(format!(
-                "РџСЂРѕР±РёРІР°СЋ UDP РґРѕ РєР»РёРµРЅС‚Р° {display_peer}. РРіСЂР° СЃР»СѓС€Р°РµС‚СЃСЏ РЅР° 127.0.0.1:{local_game_port}."
+                "Punching UDP to client {display_peer}. РРіСЂР° СЃLog Entry€Р°РµС‚СЃСЏ Log Entry° 127.0.0.1:{local_game_port}."
             ));
         })
         .await;
@@ -556,7 +556,7 @@ impl NetworkManager {
             udp_bind_addr: Some(udp_bind_addr.to_string()),
             public_udp_addr: Some(public_udp_addr.to_string()),
             signaling_server: ABLY_SIGNAL_LABEL.into(),
-            note: Some("РљР»РёРµРЅС‚ РіРѕС‚РѕРІ. РћС‚РїСЂР°РІР»СЏСЋ handshake Рё Р¶РґСѓ РѕС‚РІРµС‚ РѕС‚ С…РѕСЃС‚Р°.".into()),
+            note: Some("Client ready. Sending handshake and waiting for host.".into()),
             peers: vec![PeerInfo {
                 peer_id: peer_id.clone(),
                 addr: peer_addr.to_string(),
@@ -606,7 +606,7 @@ impl NetworkManager {
             udp_socket,
             Arc::new(quinn::TokioRuntime),
         )
-        .context("РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ client QUIC endpoint")?;
+        .context("Log Entryµ СѓРґР°Log EntryѕСЃСЊ СЃРѕР·РґР°С‚СЊ client QUIC endpoint")?;
         endpoint.set_default_client_config(build_insecure_client_config()?);
 
         Ok((
@@ -650,7 +650,7 @@ impl NetworkManager {
                         "tunnel_failed",
                         TunnelFailedEvent {
                             peer_addr: peer_addr.to_string(),
-                            reason: "РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕР±РёС‚СЊ NAT Рё СѓСЃС‚Р°РЅРѕРІРёС‚СЊ С‚СѓРЅРЅРµР»СЊ.".into(),
+                            reason: "РќРµ СѓРґР°Log EntryѕСЃСЊ РїСЂРѕLog Entry‚СЊ NAT Log EntryЃС‚Р°Log EntryѕРІLog Entry‚СЊ С‚СѓLog EntryµLog EntryЊ.".into(),
                         },
                     );
                     manager.mark_fatal(SessionMode::Client, None, &error).await;
@@ -689,7 +689,7 @@ impl NetworkManager {
         });
 
         tokio::select! {
-            _ = cancel.cancelled() => return Err(anyhow!("РїРѕРґРєР»СЋС‡РµРЅРёРµ РѕС‚РјРµРЅРµРЅРѕ")),
+            _ = cancel.cancelled() => return Err(anyhow!("РїРѕРґРєLog EntryЋС‡РµLog Entryµ РѕС‚РјРµLog EntryµLog Entryѕ")),
             _ = tokio::time::sleep(Duration::from_millis(HOST_PUNCH_GRACE_MS)) => {}
         }
 
@@ -731,7 +731,7 @@ impl NetworkManager {
             .await
             .with_context(|| {
                 format!(
-                    "РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ Р»РѕРєР°Р»СЊРЅС‹Р№ РїСЂРѕРєСЃРё РЅР° {}. РџРѕСЂС‚ СѓР¶Рµ Р·Р°РЅСЏС‚",
+                    "Log Entryµ СѓРґР°Log EntryѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ Log EntryѕРєР°Log EntryЊLog EntryїСЂРѕРєСЃLog Entry° {}. РџРѕСЂС‚ СѓР¶Рµ Р·Р°Log EntryЏС‚",
                     proxy::MINECRAFT_LOCAL_ADDR
                 )
             })?;
@@ -740,7 +740,7 @@ impl NetworkManager {
             status.state = ConnectionState::Connected;
             status.transport_path = Some("direct-quic".into());
             status.note = Some(
-                "РЎРѕРµРґРёРЅРµРЅРёРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРѕ. РџРѕРґРєР»СЋС‡Р°Р№С‚РµСЃСЊ РІ Minecraft Рє localhost:25565.".into(),
+                "РЎРѕРµРґLog EntryµLog Entryµ СѓСЃС‚Р°Log EntryѕРІLog EntryµLog Entryѕ. РџРѕРґРєLog EntryЋС‡Р°Log Entry‚РµСЃСЊ РІ Minecraft Рє localhost:25565.".into(),
             );
             status.peers = vec![PeerInfo {
                 peer_id: peer_id.clone(),
@@ -751,7 +751,7 @@ impl NetworkManager {
             }];
         })
         .await;
-        self.push_log("Р›РѕРєР°Р»СЊРЅС‹Р№ proxy РЅР° 127.0.0.1:25565 РїРѕРґРЅСЏС‚.".into())
+        self.push_log("Р›РѕРєР°Log EntryЊLog Entry° 127.0.0.1:25565 РїРѕРґLog EntryЏС‚.".into())
             .await;
         let _ = app.emit(
             "tunnel_established",
@@ -824,7 +824,7 @@ impl NetworkManager {
                             )
                             .await;
                         manager
-                            .push_log(format!("Host РїСЂРёРЅСЏР» peer {peer_id} ({remote})"))
+                            .push_log(format!("Host РїСЂLog EntryЏLog Entry{peer_id} ({remote})"))
                             .await;
 
                         let connection_cancel = cancel.clone();
@@ -879,7 +879,7 @@ impl NetworkManager {
                             {
                                 manager
                                     .set_nonfatal(format!(
-                                        "Р»РѕРєР°Р»СЊРЅС‹Р№ TCP->QUIC proxy Р·Р°РІРµСЂС€РёР»СЃСЏ РѕС€РёР±РєРѕР№: {error:#}"
+                                        "Log EntryѕРєР°Log EntryЊLog Entry->QUIC proxy Р·Р°РІРµСЂС€Log EntryЃСЏ РѕС€Log EntryєРѕLog Entry: {error:#}"
                                     ))
                                     .await;
                                 tracing::warn!("client proxy stream failed: {error:#}");
@@ -1013,7 +1013,7 @@ impl NetworkManager {
         }
 
         let (send, recv) = opened_stream.ok_or_else(|| {
-            last_error.unwrap_or_else(|| anyhow!("РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ QUIC stream РґРѕ С…РѕСЃС‚Р°"))
+            last_error.unwrap_or_else(|| anyhow!("Log Entryµ СѓРґР°Log EntryѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ QUIC stream РґРѕ С…РѕСЃС‚Р°"))
         })?;
 
         proxy::bridge_client_tcp_to_quic(tcp_stream, send, recv).await
@@ -1031,7 +1031,7 @@ impl NetworkManager {
             status.state = ConnectionState::Connecting;
             status.transport_path = Some("wss-relay".into());
             status.note = Some(
-                "РџСЂСЏРјРѕР№ UDP С‚СѓРЅРЅРµР»СЊ РЅРµ РїРѕРґРЅСЏР»СЃСЏ. РџРµСЂРµС…РѕР¶Сѓ РЅР° 100% РЅР°РґРµР¶РЅС‹Р№ РЎРµРєСЂРµС‚РЅС‹Р№ WSS С‚СѓРЅРЅРµР»СЊ (РїРѕСЂС‚ 443)."
+                "Direct UDP tunnel failed. Falling back to secure WSS tunnel (РїРѕСЂС‚ 443)."
                     .into(),
             );
         })
@@ -1051,7 +1051,7 @@ impl NetworkManager {
             status.state = ConnectionState::Connected;
             status.transport_path = Some("wss-relay".into());
             status.note = Some(
-                "РџРѕР»РЅР°СЏ РјР°СЃРєРёСЂРѕРІРєР°. РЎРѕРµРґРёРЅРµРЅРёРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРѕ С‡РµСЂРµР· РЎРµРєСЂРµС‚РЅС‹Р№ РўСѓРЅРЅРµР»СЊ 443. РџРѕРґРєР»СЋС‡Р°Р№С‚РµСЃСЊ Рє localhost:25565."
+                "РџРѕLog Entry°СЏ РјР°СЃРєLog EntryЂРѕРІРєР°. РЎРѕРµРґLog EntryµLog Entryµ СѓСЃС‚Р°Log EntryѕРІLog EntryµLog Entryѕ С‡РµСЂРµР· РЎРµРєСЂРµС‚Log EntryўСѓLog EntryµLog EntryЊ 443. РџРѕРґРєLog EntryЋС‡Р°Log Entry‚РµСЃСЊ Рє localhost:25565."
                     .into(),
             );
             status.peers = vec![PeerInfo {
@@ -1148,20 +1148,20 @@ impl NetworkManager {
 
         for attempt in 1..=CLIENT_CONNECT_RETRY_ATTEMPTS {
             if cancel.is_cancelled() {
-                return Err(anyhow!("РїРѕРґРєР»СЋС‡РµРЅРёРµ РѕС‚РјРµРЅРµРЅРѕ"));
+                return Err(anyhow!("РїРѕРґРєLog EntryЋС‡РµLog Entryµ РѕС‚РјРµLog EntryµLog Entryѕ"));
             }
 
             self.mutate_status(|status| {
                 status.state = ConnectionState::Connecting;
                 status.note = Some(format!(
-                    "QUIC handshake, РїРѕРїС‹С‚РєР° {attempt}/{CLIENT_CONNECT_RETRY_ATTEMPTS}. Р–РґСѓ РѕС‚РІРµС‚РЅС‹Р№ NAT punch."
+                    "QUIC handshake, РїРѕРїС‹С‚РєР° {attempt}/{CLIENT_CONNECT_RETRY_ATTEMPTS}. Р–РґСѓ РѕС‚РІРµС‚Log Entry."
                 ));
             })
             .await;
 
             let connect = endpoint
                 .connect(peer_addr, "localhost")
-                .context("РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїСѓСЃС‚РёС‚СЊ QUIC connect")?;
+                .context("Log Entryµ СѓРґР°Log EntryѕСЃСЊ Р·Р°РїСѓСЃС‚Log Entry‚СЊ QUIC connect")?;
 
             match timeout(Duration::from_millis(CLIENT_CONNECT_TIMEOUT_MS), connect).await {
                 Ok(Ok(connection)) => return Ok(connection),
@@ -1172,7 +1172,7 @@ impl NetworkManager {
             tokio::time::sleep(Duration::from_millis(CLIENT_CONNECT_DELAY_MS)).await;
         }
 
-        Err(last_error.unwrap_or_else(|| anyhow!("РЅРµ СѓРґР°Р»РѕСЃСЊ СѓСЃС‚Р°РЅРѕРІРёС‚СЊ QUIC session")))
+        Err(last_error.unwrap_or_else(|| anyhow!("Log Entryµ СѓРґР°Log EntryѕСЃСЊ СѓСЃС‚Р°Log EntryѕРІLog Entry‚СЊ QUIC session")))
     }
 
     fn bind_shared_udp_socket() -> Result<(std::net::UdpSocket, Arc<UdpSocket>, SocketAddr)> {
@@ -1212,7 +1212,7 @@ impl NetworkManager {
                     .await;
                 }
                 SessionControl::Client(client) => {
-                    self.push_log(format!("РљР»РёРµРЅС‚СЃРєР°СЏ СЃРµСЃСЃРёСЏ СЃ {} РѕС‡РёС‰РµРЅР°.", client.peer_addr))
+                    self.push_log(format!("РљLog EntryµLog Entry‚СЃРєР°СЏ СЃРµСЃСЃLog EntryЏ СЃ {} РѕС‡Log Entry‰РµLog Entry°.", client.peer_addr))
                         .await;
                 }
             }
@@ -1453,7 +1453,7 @@ impl NetworkManager {
 
             if status.mode == SessionMode::Host {
                 status.state = ConnectionState::Hosting;
-                status.note = Some("РРіСЂРѕРє РѕС‚РєР»СЋС‡РёР»СЃСЏ, С…РѕСЃС‚ РѕСЃС‚Р°С‘С‚СЃСЏ Р°РєС‚РёРІРЅС‹Рј.".into());
+                status.note = Some("РРіСЂРѕРє РѕС‚РєLog EntryЋС‡Log EntryЃСЏ, С…РѕСЃС‚ РѕСЃС‚Р°С‘С‚СЃСЏ Р°РєС‚Log EntryІLog Entryј.".into());
             }
         })
         .await;
@@ -1481,7 +1481,7 @@ impl NetworkManager {
             room_code,
             signaling_server: ABLY_SIGNAL_LABEL.into(),
             last_error: Some(formatted.clone()),
-            note: Some("РЎРµСЃСЃРёСЏ Р·Р°РІРµСЂС€РёР»Р°СЃСЊ СЃ РѕС€РёР±РєРѕР№.".into()),
+            note: Some("РЎРµСЃСЃLog EntryЏ Р·Р°РІРµСЂС€Log Entry°СЃСЊ СЃ РѕС€Log EntryєРѕLog Entry.".into()),
             logs: vec![formatted],
             ..Default::default()
         })
