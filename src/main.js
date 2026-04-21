@@ -464,10 +464,13 @@ async function autofillRoomNameFromLocalServer() {
   if (!localPort) return;
   try {
     const probe = await invoke("query_external_server", { host: "127.0.0.1", port: localPort });
-    let detectedName = String(probe?.roomName || "").trim();
+    let detectedName = String(probe?.roomName || probe?.description || "").trim();
     if (!detectedName) return;
 
-    // Strip "Nickname - " prefix if present
+    // Clean up color codes for the input field
+    detectedName = detectedName.replace(/[&§][0-9a-fklmno r]/gi, "").trim();
+
+    // Strip "Nickname - " prefix
     const dashIndex = detectedName.indexOf(" - ");
     if (dashIndex !== -1 && dashIndex < 20) {
       detectedName = detectedName.slice(dashIndex + 3).trim();
@@ -1879,8 +1882,7 @@ async function startHosting() {
   try {
     const preflight = await runPreflightCheck({ silent: false });
     if (!preflight.reachable) {
-      addLog("Host not started: local Minecraft is unavailable. Open LAN world or start a local server first.");
-      return;
+      addLog("Warning: local Minecraft server not detected at 127.0.0.1:" + localPort + ". Attempting to start anyway...");
     }
 
     const bootstrap = await invoke("start_hosting", {

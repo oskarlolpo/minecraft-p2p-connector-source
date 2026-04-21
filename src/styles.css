@@ -85,9 +85,9 @@ body {
   font-family: "Segoe UI Variable Text", "Inter", "Segoe UI", system-ui, sans-serif;
   color: var(--text);
   background:
-    radial-gradient(circle at top right, rgba(20, 110, 245, 0.12), transparent 22%),
-    radial-gradient(circle at top left, rgba(250, 249, 246, 0.06), transparent 16%),
-    linear-gradient(180deg, #090a0d 0%, var(--bg) 24%, color-mix(in srgb, var(--bg) 92%, #000) 100%);
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 15%, transparent), transparent 25%),
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.03), transparent 15%),
+    linear-gradient(180deg, #06070a 0%, var(--bg) 35%, color-mix(in srgb, var(--bg) 94%, #000) 100%);
 }
 
 button,
@@ -1259,4 +1259,42 @@ body[data-theme="white"] .nav-button img {
 #ping-graph {
   width: 100%;
   height: 100%;
+}
+
+/* Accent Picker */
+.accent-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.accent-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: var(--btn-color);
+  border: 2px solid transparent;
+  transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.accent-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.15), transparent);
+  opacity: 0.5;
+}
+
+.accent-btn:hover {
+  transform: scale(1.08);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.accent-btn.active {
+  border-color: #fff;
+  transform: scale(1.1);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--btn-color) 30%, transparent);
 }
