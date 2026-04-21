@@ -80,6 +80,15 @@ const externalHostModeEl = document.querySelector("#external-host-mode");
 const externalHostAddressFieldEl = document.querySelector("#external-host-address-field");
 const externalHostAddressEl = document.querySelector("#external-host-address");
 
+const playerModalEl = document.querySelector("#player-modal");
+const closePlayerModalEl = document.querySelector("#close-player-modal");
+const closePlayerModalSecondaryEl = document.querySelector("#close-player-modal-secondary");
+const kickButtonEl = document.querySelector("#kick-button");
+const pingCanvas = document.querySelector("#ping-graph");
+const ctx = pingCanvas?.getContext("2d");
+
+let activeModalPeerId = null;
+
 const portChoiceModalEl = document.querySelector("#port-choice-modal");
 const closePortModalEl = document.querySelector("#close-port-modal");
 const closePortModalSecondaryEl = document.querySelector("#close-port-modal-secondary");
@@ -91,16 +100,7 @@ const PROFILE_STORAGE_KEY = "minecraft-p2p-profile-v1";
 const EXTERNAL_SERVERS_STORAGE_KEY = "minecraft-p2p-external-servers-v1";
 const E4MC_FALLBACK_STORAGE_KEY = "minecraft-p2p-enable-e4mc";
 const IGNORED_PORTS_STORAGE_KEY = "minecraft-p2p-ignored-ports-v1";
-const CP1251_EXTRA_ENCODE_MAP = {
-  "Ђ": 0x80, "Ѓ": 0x81, "‚": 0x82, "ѓ": 0x83, "„": 0x84, "…": 0x85, "†": 0x86, "‡": 0x87,
-  "€": 0x88, "‰": 0x89, "Љ": 0x8a, "‹": 0x8b, "Њ": 0x8c, "Ќ": 0x8d, "Ћ": 0x8e, "Џ": 0x8f,
-  "ђ": 0x90, "‘": 0x91, "’": 0x92, "“": 0x93, "”": 0x94, "•": 0x95, "–": 0x96, "—": 0x97,
-  "™": 0x99, "љ": 0x9a, "›": 0x9b, "њ": 0x9c, "ќ": 0x9d, "ћ": 0x9e, "џ": 0x9f,
-  "Ў": 0xa1, "ў": 0xa2, "Ј": 0xa3, "¤": 0xa4, "Ґ": 0xa5, "¦": 0xa6, "§": 0xa7,
-  "Ё": 0xa8, "©": 0xa9, "Є": 0xaa, "«": 0xab, "¬": 0xac, "­": 0xad, "®": 0xae, "Ї": 0xaf,
-  "°": 0xb0, "±": 0xb1, "І": 0xb2, "і": 0xb3, "ґ": 0xb4, "µ": 0xb5, "¶": 0xb6, "·": 0xb7,
-  "ё": 0xb8, "№": 0xb9, "є": 0xba, "»": 0xbb, "ј": 0xbc, "Ѕ": 0xbd, "ѕ": 0xbe, "ї": 0xbf,
-};
+const SETTINGS_ACCENT_KEY = "minecraft-p2p-accent";
 
 const hostSession = {
   active: false,
@@ -148,6 +148,7 @@ const state = {
   lastLocalPlayerSyncAt: 0,
   e4mcEnabled: loadE4mcPreference(),
   ignoredPorts: loadIgnoredPorts(),
+  pingHistory: new Map(), // For graph
 };
 
 function loadE4mcPreference() {
@@ -201,6 +202,7 @@ function saveExternalServers() {
 function loadPreferences() {
   return {
     theme: localStorage.getItem(SETTINGS_THEME_KEY) || "oled",
+    accent: localStorage.getItem(SETTINGS_ACCENT_KEY) || "blue",
     language: localStorage.getItem(SETTINGS_LANGUAGE_KEY) || "ru",
   };
 }
@@ -223,50 +225,54 @@ function saveIgnoredPorts() {
   localStorage.setItem(IGNORED_PORTS_STORAGE_KEY, JSON.stringify(state.ignoredPorts));
 }
 
+function parseMinecraftColors(text) {
+  if (!text) return "";
+  const escaped = escapeHtml(text);
+  const colorMap = {
+    '0': '#000000', '1': '#0000AA', '2': '#00AA00', '3': '#00AAAA',
+    '4': '#AA0000', '5': '#AA00AA', '6': '#FFAA00', '7': '#AAAAAA',
+    '8': '#555555', '9': '#5555FF', 'a': '#55FF55', 'b': '#55FFFF',
+    'c': '#FF5555', 'd': '#FF55FF', 'e': '#FFFF55', 'f': '#FFFFFF'
+  };
+  
+  let result = "";
+  let currentClasses = [];
+  let currentColor = null;
+  
+  const parts = escaped.split(/([&§][0-9a-fklmno r])/gi);
+  
+  for (let part of parts) {
+    if (part.match(/^[&§][0-9a-fklmno r]$/i)) {
+      const code = part[1].toLowerCase();
+      if (colorMap[code]) {
+        currentColor = colorMap[code];
+        currentClasses = []; // Colors reset formatting in MC
+      } else if (code === 'r') {
+        currentColor = null;
+        currentClasses = [];
+      } else {
+        const classMap = { 'l': 'mc-bold', 'm': 'mc-strikethrough', 'n': 'mc-underline', 'o': 'mc-italic', 'k': 'mc-obfuscated' };
+        if (classMap[code]) currentClasses.push(classMap[code]);
+      }
+    } else {
+      let style = currentColor ? `color: ${currentColor};` : "";
+      let className = currentClasses.join(" ");
+      result += `<span style="${style}" class="${className}">${part}</span>`;
+    }
+  }
+  return result;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
 function t(key, variables = {}) {
   const dictionary = I18N[state.preferences.language] ?? I18N.ru;
   const template = dictionary[key] ?? I18N.ru[key] ?? key;
   return template.replaceAll(/\{(\w+)\}/g, (_, name) => String(variables[name] ?? `{${name}}`));
-}
-
-function toCp1251Byte(char) {
-  const code = char.charCodeAt(0);
-  if (code <= 0x7f) return code;
-  if (code >= 0x0410 && code <= 0x044f) return code - 0x350;
-  if (code === 0x0401) return 0xa8;
-  if (code === 0x0451) return 0xb8;
-  return CP1251_EXTRA_ENCODE_MAP[char];
-}
-
-function decodeMojibakeIfNeeded(value) {
-  const text = String(value ?? "");
-  if (!text) return text;
-  if (!/(?:[РС][\u0400-\u045f]){3,}/.test(text)) return text;
-
-  const bytes = [];
-  for (const char of text) {
-    const byte = toCp1251Byte(char);
-    if (byte == null) {
-      return text;
-    }
-    bytes.push(byte);
-  }
-
-  try {
-    const decoded = new TextDecoder("utf-8", { fatal: false }).decode(Uint8Array.from(bytes));
-    return /[А-Яа-яЁё]/.test(decoded) ? decoded : text;
-  } catch {
-    return text;
-  }
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 }
 
 function applyTranslations() {
@@ -400,15 +406,21 @@ function openPortChoiceModal(ports) {
     };
 
     // Ignore button
-    item.querySelector(".danger-button").onclick = () => {
+    item.querySelector(".danger-button").onclick = (e) => {
+      e.stopPropagation();
       if (!state.ignoredPorts.includes(det.port)) {
         state.ignoredPorts.push(det.port);
         saveIgnoredPorts();
-        renderIgnoredPorts();
       }
-      // Re-detect or just remove from this list? Let's re-detect to handle remaining items
-      autoDetectLocalGamePort();
-      closePortChoiceModal();
+      // Instant removal from UI
+      item.style.opacity = "0";
+      item.style.transform = "translateX(20px)";
+      setTimeout(() => {
+        item.remove();
+        if (detectedPortsListEl.children.length === 0) {
+          closePortChoiceModal();
+        }
+      }, 150);
     };
 
     detectedPortsListEl.appendChild(item);
@@ -452,14 +464,21 @@ async function autofillRoomNameFromLocalServer() {
   if (!localPort) return;
   try {
     const probe = await invoke("query_external_server", { host: "127.0.0.1", port: localPort });
-    const detectedName = String(probe?.roomName || "").trim();
+    let detectedName = String(probe?.roomName || "").trim();
     if (!detectedName) return;
+
+    // Strip "Nickname - " prefix if present
+    const dashIndex = detectedName.indexOf(" - ");
+    if (dashIndex !== -1 && dashIndex < 20) {
+      detectedName = detectedName.slice(dashIndex + 3).trim();
+    }
+
     if (!roomNameEl.value.trim() || roomNameEl.dataset.autofilled === "true") {
       roomNameEl.value = detectedName;
       roomNameEl.dataset.autofilled = "true";
     }
   } catch {
-    // Ignore: local world metadata is optional.
+    // Ignore
   }
 }
 
@@ -470,12 +489,23 @@ function renderSettingsOptions() {
   document.querySelectorAll("[data-language-value]").forEach((button) => {
     button.classList.toggle("active", button.dataset.languageValue === state.preferences.language);
   });
+  document.querySelectorAll(".accent-btn").forEach((button) => {
+    button.classList.toggle("active", button.dataset.accent === state.preferences.accent);
+  });
 }
 
 function applyTheme(theme) {
   state.preferences.theme = theme;
   document.body.dataset.theme = theme;
   savePreference(SETTINGS_THEME_KEY, theme);
+  renderSettingsOptions();
+}
+
+function applyAccent(accent) {
+  state.preferences.accent = accent;
+  document.documentElement.style.setProperty("--accent", `var(--accent-${accent})`);
+  document.documentElement.style.setProperty("--accent-strong", `color-mix(in srgb, var(--accent-${accent}) 80%, white)`);
+  savePreference(SETTINGS_ACCENT_KEY, accent);
   renderSettingsOptions();
 }
 
@@ -1015,7 +1045,7 @@ function renderSessionCard() {
     <div class="active-host-layout">
       <div class="host-avatar">MC</div>
       <div class="host-details">
-        <h3>${escapeHtml(hostSession.roomName)}</h3>
+        <h3>${parseMinecraftColors(hostSession.roomName)}</h3>
         <p>${escapeHtml(t("hostCardPlayers", { count: `${online}/${maxPlayers}` }))}</p>
         <div class="host-meta-row">
           <span class="host-meta-pill">${escapeHtml(t("hostCardVersion", { version }))}</span>
@@ -1052,73 +1082,173 @@ function renderPeers(peers) {
     return;
   }
 
-  const rows = [];
+  const cards = [];
   if (hostMode && hostSession.active) {
     const nickname = state.profile.nickname?.trim() || "Player";
-    const minecraftNick = state.detectedMinecraftNickname ? ` · ${state.detectedMinecraftNickname}` : "";
-    const hostTransport = state.status?.e4mcDomain
-      ? `${formatTransportLabel(state.status?.transportPath)} + e4mc`
-      : formatTransportLabel(state.status?.transportPath);
-    const hostSummary = [
-      `${t("profileNicknameLabel")}: ${nickname}`,
-      `${t("profileMinecraftNicknameLabel")}: ${state.detectedMinecraftNickname ?? "n/a"}`,
-      `Launcher: ${state.runtimeFingerprint?.launcher ?? "unknown"}`,
-      `Version: ${state.runtimeFingerprint?.minecraftVersion ?? state.status?.minecraftVersion ?? "unknown"}`,
-      `Mod loader: ${state.runtimeFingerprint?.modLoader ?? "unknown"}`,
-      `Address: ${hostSession.peerAddr ? toSocketEndpoint(hostSession.peerAddr) ?? hostSession.peerAddr : "n/a"}`,
-      `Transport: ${hostTransport || "n/a"}`,
-      `e4mc: ${state.status?.e4mcDomain ?? "n/a"}`,
-    ].join("\n");
-    rows.push(`
-      <div class="player-row">
-        <div class="player-main">
-          <strong>${escapeHtml(nickname)} <span class="row-chip">${escapeHtml(t("hostBadge"))}</span> <span class="row-chip">${escapeHtml(hostTransport)}</span></strong>
-          <span>${escapeHtml(`${t("profileMinecraftNicknameLabel")}: ${state.detectedMinecraftNickname ?? "n/a"}`)}</span>
-          <span>${escapeHtml(hostSession.peerAddr ? toSocketEndpoint(hostSession.peerAddr) ?? hostSession.peerAddr : "n/a")}</span>
-          <span>${escapeHtml(`online${minecraftNick}`)}</span>
-        </div>
-        <div class="player-actions">
-          <button class="help-badge" type="button" title="${escapeHtml(hostSummary)}">?</button>
-          <div class="row-action-button">${escapeHtml(t("playerPassiveAction"))}</div>
+    const mcNick = state.detectedMinecraftNickname ?? "n/a";
+    const avatarChar = nickname.slice(0, 1).toUpperCase();
+    
+    cards.push(`
+      <div class="player-card host-card" onclick="openPlayerModal('host')">
+        <div class="player-avatar">${avatarChar}</div>
+        <div class="player-info">
+          <div class="player-name">
+            <strong>${parseMinecraftColors(nickname)}</strong>
+            <span class="row-chip">${t("hostBadge")}</span>
+          </div>
+          <div class="player-meta">${parseMinecraftColors(mcNick)}</div>
         </div>
       </div>
     `);
   }
 
-  rows.push(
-    ...[...peers, ...inferredPlayers].map((peer) => {
-      const profile = state.peerProfiles.get(peer.peerId) ?? null;
-      const canKick = hostMode && peer.connected && !peer.inferred;
-      const label = state.pendingKicks.has(peer.peerId)
-        ? t("kickPendingButton")
-        : canKick
-          ? t("kickButton")
-          : t("playerPassiveAction");
+  [...peers, ...inferredPlayers].forEach((peer) => {
+    const profile = state.peerProfiles.get(peer.peerId) ?? null;
+    const name = peer.inferredName || profile?.nickname || peer.peerId;
+    const mcNick = profile?.minecraftNickname || peer.inferredName || "n/a";
+    const avatarChar = name.slice(0, 1).toUpperCase();
+    const ping = peer.pingMs == null ? "n/a" : `${peer.pingMs} ms`;
+    const pingClass = peer.pingMs > 200 ? "danger" : peer.pingMs > 100 ? "warning" : "";
 
-      return `
-        <div class="player-row">
-          <div class="player-main">
-          <strong>${escapeHtml(peer.inferredName || profile?.nickname || peer.peerId)} <span class="row-chip">${escapeHtml(peer.inferred ? "External" : formatTransportLabel(peer.transport))}</span></strong>
-          ${(peer.inferredName || profile?.minecraftNickname) ? `<span>${escapeHtml(peer.inferredName || profile?.minecraftNickname)}</span>` : ""}
-          <span>${escapeHtml(peer.addr)}</span>
-          <span>${peer.connected ? "online" : "pending"} · ${peer.pingMs == null ? "n/a" : `${peer.pingMs} ms`}</span>
-        </div>
-        <div class="player-actions">
-            <button class="help-badge" type="button" title="${escapeHtml(buildPeerSummaryLines(peer, profile))}">?</button>
-            ${
-              canKick
-                ? `<button class="secondary-button row-action-button" data-kick-peer="${escapeHtml(peer.peerId)}" ${
-                    state.pendingKicks.has(peer.peerId) ? "disabled" : ""
-                  }>${escapeHtml(label)}</button>`
-                : `<div class="row-action-button">${escapeHtml(label)}</div>`
-            }
+    // Track ping for graph
+    if (peer.peerId && peer.pingMs != null) {
+      if (!state.pingHistory.has(peer.peerId)) state.pingHistory.set(peer.peerId, []);
+      const history = state.pingHistory.get(peer.peerId);
+      history.push(peer.pingMs);
+      if (history.length > 40) history.shift();
+    }
+
+    cards.push(`
+      <div class="player-card" onclick="openPlayerModal('${peer.peerId}')">
+        <div class="player-avatar">${avatarChar}</div>
+        <div class="player-info">
+          <div class="player-name">
+            <strong>${parseMinecraftColors(name)}</strong>
+          </div>
+          <div class="player-meta">
+            <span>${parseMinecraftColors(mcNick)}</span>
+            <span class="ping-tag ${pingClass}">${ping}</span>
           </div>
         </div>
-      `;
-    }),
-  );
+      </div>
+    `);
+  });
 
-  peerListEl.innerHTML = rows.join("");
+  peerListEl.innerHTML = cards.join("");
+}
+
+function openPlayerModal(peerId) {
+  activeModalPeerId = peerId;
+  const isHost = peerId === 'host';
+  const peer = isHost ? null : (state.status?.peers?.find(p => p.peerId === peerId) || buildInferredPlayers(state.status?.peers || []).find(p => p.peerId === peerId));
+  
+  const profile = isHost ? {
+    nickname: state.profile.nickname,
+    minecraftNickname: state.detectedMinecraftNickname,
+    launcher: state.runtimeFingerprint?.launcher,
+    minecraftVersion: state.runtimeFingerprint?.minecraftVersion || state.status?.minecraftVersion,
+    modLoader: state.runtimeFingerprint?.modLoader
+  } : state.peerProfiles.get(peerId);
+
+  document.querySelector("#player-modal-title").innerHTML = parseMinecraftColors(isHost ? state.profile.nickname : (profile?.nickname || peerId));
+  document.querySelector("#player-modal-avatar").textContent = (isHost ? state.profile.nickname : (profile?.nickname || peerId)).slice(0, 1).toUpperCase();
+  
+  const mcNick = isHost ? state.detectedMinecraftNickname : (profile?.minecraftNickname || peer?.inferredName);
+  document.querySelector("#player-modal-mc-nick").innerHTML = mcNick ? parseMinecraftColors(mcNick) : "—";
+  
+  document.querySelector("#player-modal-launcher").textContent = profile?.launcher || "—";
+  document.querySelector("#player-modal-version").textContent = profile?.minecraftVersion || peer?.version || "—";
+  
+  const loaderEl = document.querySelector("#player-modal-loader");
+  const loader = profile?.modLoader || "—";
+  loaderEl.textContent = (loader === "—" || loader.toLowerCase() === "unknown") ? "Нераспознан" : loader;
+  loaderEl.className = (loader === "—" || loader.toLowerCase() === "unknown") ? "loader-unknown" : "";
+
+  const pingEl = document.querySelector("#player-modal-ping");
+  pingEl.textContent = isHost ? "0 ms" : (peer?.pingMs == null ? "n/a" : `${peer.pingMs} ms`);
+
+  kickButtonEl.classList.toggle("hidden", isHost || !state.status || state.status.mode !== "host" || (peer && peer.inferred));
+  
+  playerModalEl.classList.remove("hidden");
+  
+  // Animation for the graph
+  if (state.pingGraphInterval) clearInterval(state.pingGraphInterval);
+  state.pingGraphInterval = setInterval(() => {
+    updatePingGraph(activeModalPeerId);
+  }, 100);
+}
+
+function mcNickStripped(nick) {
+  if (!nick) return null;
+  return nick.replace(/[§&][0-9a-fklmno r]/gi, "");
+}
+
+function updatePingGraph(peerId) {
+  if (!ctx || !pingCanvas) return;
+  const history = state.pingHistory.get(peerId) || [];
+  
+  // Set resolution
+  pingCanvas.width = pingCanvas.offsetWidth * window.devicePixelRatio;
+  pingCanvas.height = pingCanvas.offsetHeight * window.devicePixelRatio;
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+  const w = pingCanvas.offsetWidth;
+  const h = pingCanvas.offsetHeight;
+  ctx.clearRect(0, 0, w, h);
+
+  if (history.length < 2) {
+    ctx.fillStyle = "rgba(255,255,255,0.1)";
+    ctx.font = "12px sans-serif";
+    ctx.fillText("Waiting for data...", w/2 - 40, h/2);
+    return;
+  }
+
+  const maxPing = Math.max(...history, 100);
+  const padding = 10;
+  const step = (w - padding * 2) / (history.length - 1);
+
+  // Gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, "rgba(20, 110, 245, 0.4)");
+  grad.addColorStop(1, "rgba(20, 110, 245, 0)");
+
+  ctx.beginPath();
+  ctx.moveTo(padding, h);
+  
+  for (let i = 0; i < history.length; i++) {
+    const x = padding + i * step;
+    const y = h - (history[i] / maxPing) * (h - padding * 2) - padding;
+    if (i === 0) ctx.lineTo(x, y);
+    else {
+      // Smooth curve
+      const prevX = padding + (i - 1) * step;
+      const prevY = h - (history[i-1] / maxPing) * (h - padding * 2) - padding;
+      const cpX = (prevX + x) / 2;
+      ctx.bezierCurveTo(cpX, prevY, cpX, y, x, y);
+    }
+  }
+  
+  ctx.lineTo(padding + (history.length - 1) * step, h);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Stroke
+  ctx.beginPath();
+  for (let i = 0; i < history.length; i++) {
+    const x = padding + i * step;
+    const y = h - (history[i] / maxPing) * (h - padding * 2) - padding;
+    if (i === 0) ctx.moveTo(x, y);
+    else {
+      const prevX = padding + (i - 1) * step;
+      const prevY = h - (history[i-1] / maxPing) * (h - padding * 2) - padding;
+      const cpX = (prevX + x) / 2;
+      ctx.bezierCurveTo(cpX, prevY, cpX, y, x, y);
+    }
+  }
+  ctx.strokeStyle = "var(--accent)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
 }
 
 function renderServers() {
@@ -1150,7 +1280,7 @@ function renderServers() {
         <article class="server-row ${isSelected ? "active" : ""}" data-select-server="${escapeHtml(server.clientId)}">
           <div class="server-main">
             <div class="server-main-top">
-              <strong>${escapeHtml(server.roomName)}</strong>
+              <strong>${parseMinecraftColors(server.roomName)}</strong>
               <span class="row-chip">${escapeHtml(server.hasPassword ? t("serverLockedChip") : t("serverOpenChip"))}</span>
               ${isExternal ? `<span class="row-chip external-chip">${escapeHtml(t("serverExternalChip"))}</span>` : ""}
               ${server.geyserEnabled && server.bedrockPort ? `<span class="row-chip">Bedrock ${escapeHtml(String(server.bedrockPort))}</span>` : ""}
@@ -2000,8 +2130,10 @@ await listen("tunnel_established", async (event) => {
   state.tunnelReady = true;
   state.activeTunnelTransport = event.payload?.transport ?? state.activeTunnelTransport ?? "direct-quic";
   setMinecraftHint(t("hintConnected"), true);
+  const addr = event.payload?.minecraftAddr ?? "localhost:25565";
+  await navigator.clipboard.writeText(addr);
   addLog(
-    `${t("tunnelEstablishedLog", { addr: event.payload?.minecraftAddr ?? "localhost:25565" })} (${formatTransportLabel(
+    `${t("tunnelEstablishedLog", { addr })} (${formatTransportLabel(
       state.activeTunnelTransport,
     )})`,
   );
@@ -2108,10 +2240,16 @@ copyDiagnosticsEl.addEventListener("click", async () => {
 });
 copySelectedEndpointEl.addEventListener("click", async () => {
   const selected = getSelectedServer();
-  const endpoint =
-    selected?.publicJoinAddress ??
-    selected?.joinAddress ??
-    (selected?.peerAddr ? toSocketEndpoint(selected.peerAddr) ?? selected.peerAddr : null);
+  let endpoint = null;
+  
+  if (state.tunnelReady && state.selectedServerId === selected?.clientId) {
+    endpoint = "localhost:25565"; // Default proxy port
+  } else {
+    endpoint = selected?.publicJoinAddress ??
+      selected?.joinAddress ??
+      (selected?.peerAddr ? toSocketEndpoint(selected.peerAddr) ?? selected.peerAddr : null);
+  }
+  
   if (!endpoint) return;
   await navigator.clipboard.writeText(endpoint);
   addLog(t("copiedIp"));
@@ -2162,6 +2300,29 @@ clearIgnoredPortsEl.addEventListener("click", () => {
   saveIgnoredPorts();
   renderIgnoredPorts();
 });
+
+closePlayerModalEl.addEventListener("click", closePlayerModal);
+closePlayerModalSecondaryEl.addEventListener("click", closePlayerModal);
+playerModalEl.addEventListener("click", (event) => {
+  if (event.target instanceof HTMLElement && event.target.dataset.closePlayerModal === "true") closePlayerModal();
+});
+
+kickButtonEl.addEventListener("click", async () => {
+  if (activeModalPeerId && activeModalPeerId !== 'host') {
+    await kickPeer(activeModalPeerId);
+    closePlayerModal();
+  }
+});
+
+document.querySelectorAll(".accent-btn").forEach((button) => {
+  button.addEventListener("click", () => applyAccent(button.dataset.accent));
+});
+
+function closePlayerModal() {
+  playerModalEl.classList.add("hidden");
+  if (state.pingGraphInterval) clearInterval(state.pingGraphInterval);
+  activeModalPeerId = null;
+}
 
 serverListEl.addEventListener("click", async (event) => {
   const target = event.target;
@@ -2231,6 +2392,7 @@ window.addEventListener("resize", positionProfileMenu);
 window.addEventListener("scroll", positionProfileMenu, true);
 
 document.body.dataset.theme = state.preferences.theme;
+applyAccent(state.preferences.accent);
 applyTranslations();
 renderSettingsOptions();
 syncPasswordField();

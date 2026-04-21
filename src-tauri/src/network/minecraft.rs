@@ -927,24 +927,38 @@ fn parse_log_runtime(contents: &str) -> (Option<String>, Option<String>) {
 
     for line in contents.lines().rev() {
         let trimmed = line.trim();
+        
+        // Optimization: skip empty lines
+        if trimmed.is_empty() { continue; }
+
         if minecraft_version.is_none() {
             if let Some((version, loader)) = parse_fabric_runtime(trimmed) {
                 minecraft_version = Some(version);
                 mod_loader = Some(loader);
-                break;
-            }
-            if let Some((version, loader)) = parse_quilt_runtime(trimmed) {
+            } else if let Some((version, loader)) = parse_quilt_runtime(trimmed) {
                 minecraft_version = Some(version);
                 mod_loader = Some(loader);
-                break;
-            }
-            if let Some((version, loader)) = parse_forge_runtime(trimmed) {
+            } else if let Some((version, loader)) = parse_forge_runtime(trimmed) {
                 minecraft_version = Some(version);
                 mod_loader = Some(loader);
+            } else if let Some(version) = parse_launched_version(trimmed) {
+                minecraft_version = Some(version);
+            }
+            
+            // If we found version, we might still want to find mod loader if it wasn't in the same line
+            if minecraft_version.is_some() && mod_loader.is_some() {
                 break;
             }
-            if let Some(version) = parse_launched_version(trimmed) {
-                minecraft_version = Some(version);
+        }
+        
+        // Secondary check for mod loader if not found yet
+        if mod_loader.is_none() {
+            if trimmed.contains("FabricLoader") || trimmed.contains("net.fabricmc.loader") {
+                mod_loader = Some("Fabric".into());
+            } else if trimmed.contains("Forge mod loading") || trimmed.contains("net.minecraftforge.fml") {
+                mod_loader = Some("Forge".into());
+            } else if trimmed.contains("QuiltLoader") {
+                mod_loader = Some("Quilt".into());
             }
         }
     }
@@ -1017,6 +1031,19 @@ fn sanitize_minecraft_nickname(value: &str) -> Option<String> {
 
 fn read_text_lossy(path: &Path) -> Option<String> {
     let bytes = fs::read(path).ok()?;
+    
+    // Try UTF-8 first
+    if let Ok(utf8_str) = String::from_utf8(bytes.clone()) {
+        return Some(utf8_str);
+    }
+
+    // Fallback to Windows-1251 for Russian users with legacy encoding
+    let (res, _, had_errors) = encoding_rs::WINDOWS_1251.decode(&bytes);
+    if !had_errors {
+        return Some(res.into_owned());
+    }
+
+    // Last resort: lossy UTF-8
     Some(String::from_utf8_lossy(&bytes).to_string())
 }
 
