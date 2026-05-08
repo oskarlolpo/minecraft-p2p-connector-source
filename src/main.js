@@ -2517,6 +2517,7 @@ function handleFriendsMessage(msg) {
       friendsState.friends = msg.friends || [];
       friendsState.pendingRequests = msg.pendingRequests || [];
       document.querySelector("#my-friend-code").textContent = msg.user?.friend_code || "----";
+      updateSidebarAvatar(msg.user);
       renderFriendsList();
       break;
 
@@ -2587,7 +2588,7 @@ function renderFriendsList() {
     } else {
       reqEl.innerHTML = friendsState.pendingRequests.map((r) => `
         <div class="friend-card friend-request-card">
-          <div class="friend-avatar">${escapeHtml((r.nickname || "?")[0].toUpperCase())}</div>
+          ${renderAvatarEl(r, 38)}
           <div class="friend-info">
             <strong>${escapeHtml(r.nickname)}</strong>
             <span class="friend-code-small">${escapeHtml(r.friend_code || "")}</span>
@@ -2611,8 +2612,10 @@ function renderFriendsList() {
         try { hostData = JSON.parse(f.host_data); } catch {}
         return `
           <div class="friend-card friend-hosting-card">
-            <div class="friend-avatar hosting-glow">${escapeHtml((f.nickname || "?")[0].toUpperCase())}</div>
-            <div class="friend-info">
+            <div class="friend-avatar hosting-glow" style="cursor:pointer" onclick="openUserProfile('${escapeHtml(f.id)}')">
+              ${f.avatar_url ? `<img src="${escapeHtml(f.avatar_url)}" alt="${escapeHtml(f.nickname)}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit"/>` : escapeHtml((f.nickname || "?")[0].toUpperCase())}
+            </div>
+            <div class="friend-info" style="cursor:pointer" onclick="openUserProfile('${escapeHtml(f.id)}')">
               <strong>${escapeHtml(f.nickname)}</strong>
               <span class="host-room-name">${escapeHtml(hostData.roomName || "Unnamed")}</span>
               <span class="host-meta-small">${escapeHtml(hostData.version || "")} · ${hostData.online || 0}/${hostData.maxPlayers || 0}</span>
@@ -2625,6 +2628,18 @@ function renderFriendsList() {
       }).join("");
     }
   }
+
+  // Update badge counts
+  const reqCount = friendsState.pendingRequests.length;
+  const onlineCountEl = document.querySelector("#friends-online-count");
+  const allCountEl = document.querySelector("#friends-all-count");
+  const reqCountEl = document.querySelector("#friends-req-count");
+  if (onlineCountEl) onlineCountEl.textContent = online.length;
+  if (allCountEl) allCountEl.textContent = accepted.length;
+  if (reqCountEl) {
+    reqCountEl.textContent = reqCount;
+    reqCountEl.style.display = reqCount ? "" : "none";
+  }
 }
 
 function renderFriendCard(f, showPresence) {
@@ -2634,17 +2649,38 @@ function renderFriendCard(f, showPresence) {
   const statusText = isHosting ? t("friendsHosting") : isOnline ? t("friendsOnlineStatus") : t("friendsOffline");
 
   return `
-    <div class="friend-card">
-      <div class="friend-avatar ${statusClass}">${escapeHtml((f.nickname || "?")[0].toUpperCase())}</div>
+    <div class="friend-card" style="cursor:pointer" onclick="openUserProfile('${escapeHtml(f.id)}')">
+      ${renderAvatarEl(f, 38)}
       <div class="friend-info">
         <strong>${escapeHtml(f.nickname)}</strong>
         ${showPresence ? `<span class="friend-status ${statusClass}">${escapeHtml(statusText)}</span>` : `<span class="friend-code-small">${escapeHtml(f.friend_code || "")}</span>`}
       </div>
-      <div class="friend-actions">
+      <div class="friend-actions" onclick="event.stopPropagation()">
         <button class="ghost-button compact danger-button" onclick="removeFriend('${escapeHtml(f.friendship_id)}')" title="${escapeHtml(t("friendsRemove"))}">✕</button>
       </div>
     </div>
   `;
+}
+
+async function joinFriendHost(userId) {
+  const f = friendsState.friends.find((f) => f.id === userId);
+  if (!f || !f.host_data) {
+    addLog("[Friends] Friend is not hosting or host data is missing");
+    return;
+  }
+  try {
+    const hostData = JSON.parse(f.host_data);
+    if (!hostData.publicAddr) {
+      addLog("[Friends] Host address is missing");
+      return;
+    }
+    addLog(`[Friends] Joining ${f.nickname}'s room: ${hostData.roomName || "Unnamed"}...`);
+    // Here we use the existing join_room_command or direct connection logic
+    // For simplicity, we'll try to use the join logic from Home page
+    await joinRoomByAddr(hostData.publicAddr, hostData.password || "");
+  } catch (e) {
+    addLog(`[Friends] Failed to join: ${e.message}`);
+  }
 }
 
 async function refreshFriendsList() {
@@ -3226,45 +3262,5 @@ window.toggleFollow = async function(userId, isFollowing) {
   }
 };
 
-// Update renderFriendCard to use avatars and open profiles
-function renderFriendCard(f, showPresence) {
-  const isOnline = f.online;
-  const isHosting = f.hosting;
-  const statusClass = isHosting ? "status-hosting" : isOnline ? "status-online" : "status-offline";
-  const statusText = isHosting ? "Хостит" : isOnline ? "Онлайн" : "Оффлайн";
 
-  return `
-    <div class="friend-card" style="cursor:pointer" onclick="openUserProfile('${escapeHtml(f.id)}')">
-      ${renderAvatarEl(f, 38)}
-      <div class="friend-info">
-        <strong>${escapeHtml(f.nickname)}</strong>
-        ${showPresence
-          ? `<span class="friend-status ${statusClass}">${escapeHtml(statusText)}</span>`
-          : `<span class="friend-code-small">${escapeHtml(f.friend_code || "")}</span>`}
-      </div>
-      <div class="friend-actions" onclick="event.stopPropagation()">
-        <button class="ghost-button compact danger-button" onclick="removeFriend('${escapeHtml(f.friendship_id)}')" title="Удалить">✕</button>
-      </div>
-    </div>
-  `;
-}
-
-// Update renderFriendsList to update badge counts
-const _origRenderFriendsList = renderFriendsList;
-// patch counts into the existing renderFriendsList
-function renderFriendsListWithCounts() {
-  renderFriendsList();
-  const accepted = friendsState.friends.filter(f => f.status === "accepted");
-  const online = accepted.filter(f => f.online);
-  const reqCount = friendsState.pendingRequests.length;
-  const onlineCountEl = document.querySelector("#friends-online-count");
-  const allCountEl = document.querySelector("#friends-all-count");
-  const reqCountEl = document.querySelector("#friends-req-count");
-  if (onlineCountEl) onlineCountEl.textContent = online.length;
-  if (allCountEl) allCountEl.textContent = accepted.length;
-  if (reqCountEl) {
-    reqCountEl.textContent = reqCount;
-    reqCountEl.style.display = reqCount ? "" : "none";
-  }
-}
 
