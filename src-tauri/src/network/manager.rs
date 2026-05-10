@@ -762,6 +762,12 @@ impl NetworkManager {
             },
         );
 
+                let _broadcaster = super::bedrock_broadcaster::BedrockBroadcaster::start(
+            format!("P2P {}", peer_id),
+            19132,
+            cancel.clone(),
+        ).await;
+
         let proxy_task =
             self.spawn_client_proxy_loop(local_listener, connection.clone(), cancel.clone());
         let ping_task = self.spawn_ping_loop(connection.clone(), peer_id.clone(), cancel.clone());
@@ -1504,4 +1510,5 @@ impl NetworkManager {
         }
     }
 }
+
 

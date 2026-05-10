@@ -535,7 +535,7 @@ async function loadAppInfo() {
     const info = await invoke("get_app_info");
     settingsVersionEl.textContent = info.version;
   } catch {
-    settingsVersionEl.textContent = "0.3.32";
+    settingsVersionEl.textContent = "0.3.33";
   }
 }
 
@@ -3224,6 +3224,7 @@ window.toggleFollow = async function(userId, isFollowing) {
     addLog(`[Follow] Error: ${e.message}`);
   }
 };
+
 
 
 

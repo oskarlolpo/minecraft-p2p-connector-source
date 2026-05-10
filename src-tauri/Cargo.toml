@@ -1,6 +1,6 @@
 [package]
 name = "minecraft-p2p-connector"
-version = "0.3.31"
+version = "0.3.33"
 edition = "2021"
 rust-version = "1.83"
 description = "Low-latency Minecraft Java P2P LAN connector over QUIC"
@@ -34,3 +34,4 @@ http-body-util = "0.1"
 trust-dns-resolver = { version = "0.23", default-features = true }
 encoding_rs = "0.8"
 zstd = "0.13"
+
