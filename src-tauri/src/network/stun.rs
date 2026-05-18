@@ -202,7 +202,7 @@ pub async fn detect_nat_type() -> NatTypeResult {
             mapped[0]
         ),
         "symmetric" => format!(
-            "NAT тип: Symmetric. Порт меняется для каждого соединения ({} vs {}). P2P QUIC hole-punching может не работать. Рекомендуется использовать e4mc или WSS relay.",
+            "NAT тип: Symmetric. Порт меняется для каждого соединения ({} vs {}). P2P QUIC hole-punching может не работать. Рекомендуется использовать WSS relay.",
             mapped[0], mapped[1]
         ),
         "multiple_ips" => format!(
