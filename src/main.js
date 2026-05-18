@@ -973,7 +973,6 @@ function renderSessionCard() {
   const hostBedrockEndpoint = deriveBedrockEndpoint(status?.publicUdpAddr, status?.bedrockPort);
   const online = Math.max(1, (status?.peerCount ?? 0) + 1);
   const maxPlayers = Math.max(online, hostSession.maxPlayers ?? 30);
-  const e4mcLabel = null;
 
   if (mode === "client") {
     hostSectionTitleEl.textContent = t("clientSessionTitle");
@@ -2449,63 +2448,3 @@ setInterval(() => {
 }, 1000);
 
 
-// Host Profiles
-const hostProfileSelect = document.querySelector("#host-profile-select");
-const saveHostProfileBtn = document.querySelector("#save-host-profile");
-
-function loadHostProfiles() {
-    try {
-        return JSON.parse(localStorage.getItem("host_profiles") || "{}");
-    } catch { return {}; }
-}
-function saveHostProfiles(profiles) {
-    localStorage.setItem("host_profiles", JSON.stringify(profiles));
-}
-function updateProfileSelect() {
-    if (!hostProfileSelect) return;
-    const profiles = loadHostProfiles();
-    const currentVal = hostProfileSelect.value;
-    hostProfileSelect.innerHTML = '<option value="">По умолчанию</option>';
-    for (const name of Object.keys(profiles)) {
-        const opt = document.createElement("option");
-        opt.value = name;
-        opt.textContent = name;
-        hostProfileSelect.appendChild(opt);
-    }
-    hostProfileSelect.value = profiles[currentVal] ? currentVal : "";
-}
-
-hostProfileSelect?.addEventListener("change", () => {
-    const val = hostProfileSelect.value;
-    if (!val) return;
-    const profiles = loadHostProfiles();
-    const p = profiles[val];
-    if (p) {
-        if (hostRoomNameEl) hostRoomNameEl.value = p.roomName || "";
-        if (hostPasswordEl) hostPasswordEl.value = p.password || "";
-        if (hostPortEl) hostPortEl.value = p.port || "";
-        if (hostBedrockEnabledEl) hostBedrockEnabledEl.checked = Boolean(p.bedrock);
-        if (hostBedrockPortEl) hostBedrockPortEl.value = p.bedrockPort || "";
-        saveHostState();
-    }
-});
-
-saveHostProfileBtn?.addEventListener("click", () => {
-    const name = prompt("Введите имя профиля:");
-    if (!name) return;
-    const profiles = loadHostProfiles();
-    profiles[name] = {
-        roomName: hostRoomNameEl?.value || "",
-        password: hostPasswordEl?.value || "",
-        port: hostPortEl?.value || "",
-        bedrock: hostBedrockEnabledEl?.checked || false,
-        bedrockPort: hostBedrockPortEl?.value || ""
-    };
-    saveHostProfiles(profiles);
-    updateProfileSelect();
-    hostProfileSelect.value = name;
-    addLog("Профиль сохранен: " + name);
-});
-
-// Call on startup
-updateProfileSelect();
