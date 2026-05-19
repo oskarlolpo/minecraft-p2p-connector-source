@@ -66,7 +66,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(12);
 const RECONNECT_DELAY: Duration = Duration::from_millis(2_000);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(25);
 
-const DEFAULT_WSS_RELAY_URL: &str = "ws://2.26.54.53:8443/ws";
+const DEFAULT_WSS_RELAY_URL: &str = "ws://2.26.87.126:8443/ws";
 
 // ── Public types ────────────────────────────────────────────────────────
 

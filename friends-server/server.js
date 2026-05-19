@@ -12,7 +12,7 @@ import multer from "multer";
 const PORT = process.env.PORT || 3478;
 const DB_PATH = process.env.DB_PATH || "./friends.db";
 const AVATARS_DIR = process.env.AVATARS_DIR || "./avatars";
-const AVATARS_BASE_URL = process.env.AVATARS_BASE_URL || `http://2.26.54.53:${PORT}/avatars`;
+const AVATARS_BASE_URL = process.env.AVATARS_BASE_URL || `http://2.26.87.126:${PORT}/avatars`;
 
 // Ensure avatars directory exists
 if (!existsSync(AVATARS_DIR)) mkdirSync(AVATARS_DIR, { recursive: true });

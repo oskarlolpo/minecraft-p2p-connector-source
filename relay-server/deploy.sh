@@ -1,14 +1,14 @@
 #!/bin/bash
 # ============================================================
 # MCP2P Relay Server — Deploy Script для Ubuntu 24.04
-# VPS: oskarlolpo-vpn (2.26.54.53)
+# VPS: oskarlolpo (2.26.87.126)
 # ============================================================
 #
 # Использование:
 #   1. Скопируйте этот скрипт на VPS:
-#      scp deploy.sh root@2.26.54.53:/root/
+#      scp deploy.sh root@2.26.87.126:/root/
 #   2. Запустите:
-#      ssh root@2.26.54.53 "bash /root/deploy.sh"
+#      ssh root@2.26.87.126 "bash /root/deploy.sh"
 #
 # Или просто выполните команды вручную по порядку.
 # ============================================================
@@ -65,7 +65,7 @@ echo "=== MCP2P Relay: Настройка Nginx ==="
 cat > /etc/nginx/sites-available/mcp2p-relay << 'NGINX'
 server {
     listen 80;
-    server_name oskarlolpo-vpn.play2go.cloud;
+    server_name oskarlolpo.play2go.cloud;
 
     location /ws {
         proxy_pass http://127.0.0.1:8443;
@@ -91,10 +91,10 @@ ln -sf /etc/nginx/sites-available/mcp2p-relay /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx
 
 echo "=== MCP2P Relay: Получение TLS сертификата ==="
-certbot --nginx -d oskarlolpo-vpn.play2go.cloud --non-interactive --agree-tos --email artyom@example.com || {
+certbot --nginx -d oskarlolpo.play2go.cloud --non-interactive --agree-tos --email artyom@example.com || {
     echo "ВНИМАНИЕ: Certbot не смог получить сертификат."
-    echo "Возможно, домен не указывает на этот сервер."
-    echo "Попробуйте вручную: certbot --nginx -d oskarlolpo-vpn.play2go.cloud"
+    echo "Возможно, домен не указывает на этот server."
+    echo "Попробуйте вручную: certbot --nginx -d oskarlolpo.play2go.cloud"
 }
 
 echo ""
@@ -102,5 +102,5 @@ echo "============================================"
 echo " MCP2P Relay Server установлен!"
 echo " Статус: systemctl status mcp2p-relay"
 echo " Логи:   journalctl -u mcp2p-relay -f"
-echo " URL:    wss://oskarlolpo-vpn.play2go.cloud/ws"
+echo " URL:    wss://oskarlolpo.play2go.cloud/ws"
 echo "============================================"
