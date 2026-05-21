@@ -9,10 +9,10 @@ use tokio_util::sync::CancellationToken;
 
 const DEFAULT_STUN_SERVERS: &str =
     "stun.cloudflare.com:3478,stun.l.google.com:19302,stun1.l.google.com:19302";
-const PUNCH_FAST_BURST_PACKETS: usize = 24;
-const PUNCH_FAST_BURST_DELAY_MS: u64 = 40;
-const PUNCH_SUSTAIN_PACKETS: usize = 80;
-const PUNCH_SUSTAIN_DELAY_MS: u64 = 110;
+const PUNCH_FAST_BURST_PACKETS: usize = 40;
+const PUNCH_FAST_BURST_DELAY_MS: u64 = 30;
+const PUNCH_SUSTAIN_PACKETS: usize = 100;
+const PUNCH_SUSTAIN_DELAY_MS: u64 = 100;
 
 #[derive(Debug, Clone)]
 pub struct SignalingConfig {

@@ -26,10 +26,10 @@ use super::{
 };
 
 const ABLY_SIGNAL_LABEL: &str = "Ably Presence + Channels";
-const CLIENT_CONNECT_RETRY_ATTEMPTS: usize = 10;
-const CLIENT_CONNECT_TIMEOUT_MS: u64 = 1500;
-const CLIENT_CONNECT_DELAY_MS: u64 = 300;
-const HOST_PUNCH_GRACE_MS: u64 = 900;
+const CLIENT_CONNECT_RETRY_ATTEMPTS: usize = 12;
+const CLIENT_CONNECT_TIMEOUT_MS: u64 = 2000;
+const CLIENT_CONNECT_DELAY_MS: u64 = 250;
+const HOST_PUNCH_GRACE_MS: u64 = 1800;
 
 #[derive(Clone)]
 pub struct NetworkManager {
@@ -341,10 +341,10 @@ impl NetworkManager {
             let session = self.inner.session.lock().await;
             let runtime = session
                 .as_ref()
-                .ok_or_else(|| anyhow!("Р°РєС‚РёРІРЅРѕР№ СЃРµСЃСЃРёРё РЅРµС‚"))?;
+                .ok_or_else(|| anyhow!("активной сессии нет"))?;
 
             let SessionControl::Host(host) = &runtime.control else {
-                return Err(anyhow!("РІС‹РіРЅР°С‚СЊ РёРіСЂРѕРєР° РјРѕР¶РЅРѕ С‚РѕР»СЊРєРѕ РёР· СЂРµР¶РёРјР° С…РѕСЃС‚Р°"));
+                return Err(anyhow!("выгнать игрока можно только из режима хоста"));
             };
 
             host.live_connections.clone()
@@ -352,12 +352,12 @@ impl NetworkManager {
 
         let connection = live_connections.lock().await.remove(&peer_id);
         let Some(connection) = connection else {
-            return Err(anyhow!("РёРіСЂРѕРє {peer_id} РЅРµ РЅР°Р№РґРµРЅ СЃСЂРµРґРё Р°РєС‚РёРІРЅС‹С… РїРѕРґРєР»СЋС‡РµРЅРёР№"));
+            return Err(anyhow!("игрок {peer_id} не найден среди активных подключений"));
         };
 
         connection.close(VarInt::from_u32(1), b"kicked-by-host");
         self.mark_peer_disconnected(&peer_id).await;
-        self.push_log(format!("РРіСЂРѕРє {peer_id} РѕС‚РєР»СЋС‡С‘РЅ С…РѕСЃС‚РѕРј."))
+        self.push_log(format!("Игрок {peer_id} отключён хостом."))
             .await;
         Ok(())
     }
@@ -507,7 +507,7 @@ impl NetworkManager {
         self.mutate_status(|status| {
             status.state = ConnectionState::Punching;
             status.note = Some(format!(
-                "Punching UDP to client {display_peer}. РРіСЂР° СЃР»СѓС€Р°РµС‚СЃСЏ РЅР° 127.0.0.1:{local_game_port}."
+                "Игрок подключается... Пробиваем NAT для {display_peer}."
             ));
         })
         .await;
@@ -619,7 +619,7 @@ impl NetworkManager {
             udp_socket,
             Arc::new(quinn::TokioRuntime),
         )
-        .context("РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ client QUIC endpoint")?;
+        .context("не удалось создать client QUIC endpoint")?;
         endpoint.set_default_client_config(build_insecure_client_config()?);
 
         Ok((
@@ -663,7 +663,7 @@ impl NetworkManager {
                         "tunnel_failed",
                         TunnelFailedEvent {
                             peer_addr: peer_addr.to_string(),
-                            reason: "РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕР±РёС‚СЊ NAT Рё СѓСЃС‚Р°РЅРѕРІРёС‚СЊ С‚СѓРЅРЅРµР»СЊ.".into(),
+                            reason: "Не удалось пробить NAT и установить туннель.".into(),
                         },
                     );
                     manager.mark_fatal(SessionMode::Client, None, &error).await;
@@ -702,7 +702,7 @@ impl NetworkManager {
         });
 
         tokio::select! {
-            _ = cancel.cancelled() => return Err(anyhow!("РїРѕРґРєР»СЋС‡РµРЅРёРµ РѕС‚РјРµРЅРµРЅРѕ")),
+            _ = cancel.cancelled() => return Err(anyhow!("подключение отменено")),
             _ = tokio::time::sleep(Duration::from_millis(HOST_PUNCH_GRACE_MS)) => {}
         }
 
@@ -846,7 +846,7 @@ impl NetworkManager {
                             )
                             .await;
                         manager
-                            .push_log(format!("Host РїСЂРёРЅСЏР» peer {peer_id} ({remote})"))
+                            .push_log(format!("Host принял peer {peer_id} ({remote})"))
                             .await;
 
                         let connection_cancel = cancel.clone();
@@ -903,7 +903,7 @@ impl NetworkManager {
                             {
                                 manager
                                     .set_nonfatal(format!(
-                                        "Р»РѕРєР°Р»СЊРЅС‹Р№ TCP->QUIC proxy Р·Р°РІРµСЂС€РёР»СЃСЏ РѕС€РёР±РєРѕР№: {error:#}"
+                                        "локальный TCP->QUIC proxy завершился ошибкой: {error:#}"
                                     ))
                                     .await;
                                 tracing::warn!("client proxy stream failed: {error:#}");
@@ -948,6 +948,8 @@ impl NetworkManager {
                     "pingMs": rtt,
                     "packetLoss": stats.path.lost_packets,
                     "sentPackets": stats.path.sent_packets,
+                    "bytesRx": stats.udp_rx.bytes,
+                    "bytesTx": stats.udp_tx.bytes,
                 }));
 
                 if connection.close_reason().is_some() {
@@ -1047,7 +1049,7 @@ impl NetworkManager {
         }
 
         let (send, recv) = opened_stream.ok_or_else(|| {
-            last_error.unwrap_or_else(|| anyhow!("РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ QUIC stream РґРѕ С…РѕСЃС‚Р°"))
+            last_error.unwrap_or_else(|| anyhow!("не удалось открыть QUIC stream до хоста"))
         })?;
 
         proxy::bridge_client_tcp_to_quic(tcp_stream, send, recv).await
@@ -1181,20 +1183,20 @@ impl NetworkManager {
 
         for attempt in 1..=CLIENT_CONNECT_RETRY_ATTEMPTS {
             if cancel.is_cancelled() {
-                return Err(anyhow!("РїРѕРґРєР»СЋС‡РµРЅРёРµ РѕС‚РјРµРЅРµРЅРѕ"));
+                return Err(anyhow!("подключение отменено"));
             }
 
             self.mutate_status(|status| {
                 status.state = ConnectionState::Connecting;
                 status.note = Some(format!(
-                    "QUIC handshake, РїРѕРїС‹С‚РєР° {attempt}/{CLIENT_CONNECT_RETRY_ATTEMPTS}. Р–РґСѓ РѕС‚РІРµС‚РЅС‹Р№ NAT punch."
+                    "QUIC handshake, попытка {attempt}/{CLIENT_CONNECT_RETRY_ATTEMPTS}. Жду ответный NAT punch."
                 ));
             })
             .await;
 
             let connect = endpoint
                 .connect(peer_addr, "localhost")
-                .context("РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїСѓСЃС‚РёС‚СЊ QUIC connect")?;
+                .context("не удалось запустить QUIC connect")?;
 
             match timeout(Duration::from_millis(CLIENT_CONNECT_TIMEOUT_MS), connect).await {
                 Ok(Ok(connection)) => return Ok(connection),
@@ -1205,7 +1207,7 @@ impl NetworkManager {
             tokio::time::sleep(Duration::from_millis(CLIENT_CONNECT_DELAY_MS)).await;
         }
 
-        Err(last_error.unwrap_or_else(|| anyhow!("РЅРµ СѓРґР°Р»РѕСЃСЊ СѓСЃС‚Р°РЅРѕРІРёС‚СЊ QUIC session")))
+        Err(last_error.unwrap_or_else(|| anyhow!("не удалось установить QUIC session")))
     }
 
     fn bind_shared_udp_socket() -> Result<(std::net::UdpSocket, Arc<UdpSocket>, SocketAddr)> {
@@ -1245,7 +1247,7 @@ impl NetworkManager {
                     .await;
                 }
                 SessionControl::Client(client) => {
-                    self.push_log(format!("РљР»РёРµРЅС‚СЃРєР°СЏ СЃРµСЃСЃРёСЏ СЃ {} РѕС‡РёС‰РµРЅР°.", client.peer_addr))
+                    self.push_log(format!("Клиентская сессия с {} очищена.", client.peer_addr))
                         .await;
                 }
             }
@@ -1492,7 +1494,7 @@ impl NetworkManager {
 
             if status.mode == SessionMode::Host {
                 status.state = ConnectionState::Hosting;
-                status.note = Some("РРіСЂРѕРє РѕС‚РєР»СЋС‡РёР»СЃСЏ, С…РѕСЃС‚ РѕСЃС‚Р°С‘С‚СЃСЏ Р°РєС‚РёРІРЅС‹Рј.".into());
+                status.note = Some("Игрок отключился, хост остаётся активным.".into());
             }
         })
         .await;
@@ -1520,7 +1522,7 @@ impl NetworkManager {
             room_code,
             signaling_server: ABLY_SIGNAL_LABEL.into(),
             last_error: Some(formatted.clone()),
-            note: Some("РЎРµСЃСЃРёСЏ Р·Р°РІРµСЂС€РёР»Р°СЃСЊ СЃ РѕС€РёР±РєРѕР№.".into()),
+            note: Some("Сессия завершилась с ошибкой.".into()),
             logs: vec![formatted],
             ..Default::default()
         })
