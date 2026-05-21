@@ -156,7 +156,7 @@ async fn connect_to_peer(
     let peer_addr = peer_addrs
         .iter()
         .find_map(|value| multiaddr_or_socket_to_socket(value))
-        .ok_or_else(|| "РЅРµ СѓРґР°Р»РѕСЃСЊ РёР·РІР»РµС‡СЊ socket address РёР· peerAddrs".to_string())?;
+        .ok_or_else(|| "не удалось извлечь socket address из peerAddrs".to_string())?;
 
     state
         .manager
@@ -179,7 +179,7 @@ async fn prepare_client_connect(
     let peer_addr = peer_addrs
         .iter()
         .find_map(|value| multiaddr_or_socket_to_socket(value))
-        .ok_or_else(|| "РЅРµ СѓРґР°Р»РѕСЃСЊ РёР·РІР»РµС‡СЊ socket address РёР· peerAddrs".to_string())?;
+        .ok_or_else(|| "не удалось извлечь socket address из peerAddrs".to_string())?;
 
     state
         .manager
@@ -436,7 +436,7 @@ async fn install_update_impl() -> anyhow::Result<InstallUpdateResult> {
     let update = check_for_updates_impl().await?;
     if !update.available {
         return Ok(InstallUpdateResult {
-            message: "РћР±РЅРѕРІР»РµРЅРёР№ РЅРµС‚.".into(),
+            message: "Обновлений нет.".into(),
         });
     }
 
@@ -464,7 +464,7 @@ async fn install_update_impl() -> anyhow::Result<InstallUpdateResult> {
     launch_file_detached(&temp_path)?;
 
     Ok(InstallUpdateResult {
-        message: format!("РЈСЃС‚Р°РЅРѕРІС‰РёРє Р·Р°РіСЂСѓР¶РµРЅ Рё Р·Р°РїСѓС‰РµРЅ: {}", temp_path.display()),
+        message: format!("Установщик загружен и запущен: {}", temp_path.display()),
     })
 }
 
@@ -752,7 +752,7 @@ async fn start_oauth_server(app: AppHandle) -> Result<u16, String> {
                     // Check for error
                     if let Some(err) = get_param(query_str, "error").or_else(|| get_param(query_str, "error_description")) {
                         println!("[auth-server] OAuth error: {}", err);
-                        let body = format!("<html><body style='background:#05050a;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0'><div style='text-align:center;padding:40px;background:rgba(10,10,18,.6);border-radius:24px;max-width:400px'><h2>РћС€РёР±РєР° РІС…РѕРґР°</h2><p style='color:#fca5a5'>{}</p><p style='color:#9ca3af'>Р—Р°РєСЂРѕР№С‚Рµ СЌС‚Рѕ РѕРєРЅРѕ Рё РїРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰С‘ СЂР°Р·.</p></div></body></html>", err);
+                        let body = format!("<html><body style='background:#05050a;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0'><div style='text-align:center;padding:40px;background:rgba(10,10,18,.6);border-radius:24px;max-width:400px'><h2>Ошибка входа</h2><p style='color:#fca5a5'>{}</p><p style='color:#9ca3af'>Закройте это окно и попробуйте ещё раз.</p></div></body></html>", err);
                         let resp = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
                         let _ = stream.write_all(resp.as_bytes()).await;
                         continue;

@@ -1,3 +1,24 @@
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (err) {}
+  }
+  const textArea = document.createElement('textarea');
+  textArea.value = text;
+  textArea.style.position = 'fixed';
+  textArea.style.top = '0';
+  textArea.style.left = '0';
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  try {
+    document.execCommand('copy');
+  } catch (err) { console.error(err); }
+  document.body.removeChild(textArea);
+}
+
 import * as Ably from "ably";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
@@ -1077,7 +1098,7 @@ function renderSessionCard() {
           <p style="margin-bottom: 12px;">Заходите в Minecraft и подключайтесь по этому адресу:</p>
           <div class="ip-box" style="display: flex; gap: 8px; align-items: center; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px;">
               <strong style="font-size: 1.2em; font-family: monospace; user-select: all;">127.0.0.1:25565</strong>
-              <button onclick="navigator.clipboard.writeText('127.0.0.1:25565')" class="ghost-button">📋 Копировать</button>
+              <button onclick="copyTextToClipboard('127.0.0.1:25565')" class="ghost-button">📋 Копировать</button>
           </div>
           <div class="host-meta-row" style="margin-top: 12px;">
             <span class="host-meta-pill">${escapeHtml(status?.peers?.[0]?.pingMs == null ? "Ping: n/a" : `Ping: ${status.peers[0].pingMs} ms`)}</span>
@@ -1888,7 +1909,7 @@ async function copyDiagnosticsSnapshot() {
   try {
     const localPort = Number(localGamePortEl.value || 25565);
     const snapshot = await invoke("export_diagnostics_snapshot", { localPort });
-    await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
+    await copyTextToClipboard(JSON.stringify(snapshot, null, 2));
     addLog("Full diagnostics copied to clipboard.");
   } catch (error) {
     addLog(`Failed to export diagnostics: ${String(error)}`);
@@ -2038,7 +2059,7 @@ async function connectToServer(server) {
   if (server.external) {
     const externalJoin = server.joinAddress ?? (server.peerAddr ? toSocketEndpoint(server.peerAddr) ?? server.peerAddr : null);
     if (externalJoin) {
-      await navigator.clipboard.writeText(externalJoin);
+      await copyTextToClipboard(externalJoin);
       state.pendingConnects.add(server.clientId);
       renderServers();
       addLog(t("copiedIp"));
@@ -2126,7 +2147,7 @@ async function connectToServer(server) {
       // no-op: best effort cleanup for prepared client state
     }
     if (server.publicJoinAddress) {
-      await navigator.clipboard.writeText(server.publicJoinAddress);
+      await copyTextToClipboard(server.publicJoinAddress);
       addLog(t("connectFallbackCopied", { address: server.publicJoinAddress }));
       setMinecraftHint(`${t("selectedAddressLabel")}: ${server.publicJoinAddress}`, true);
     }
@@ -2193,7 +2214,7 @@ await listen("tunnel_established", async (event) => {
   state.activeTunnelTransport = event.payload?.transport ?? state.activeTunnelTransport ?? "direct-quic";
   setMinecraftHint(t("hintConnected"), true);
   const addr = event.payload?.minecraftAddr ?? "localhost:25565";
-  await navigator.clipboard.writeText(addr);
+  await copyTextToClipboard(addr);
   addLog(
     `${t("tunnelEstablishedLog", { addr })} (${formatTransportLabel(
       state.activeTunnelTransport,
@@ -2248,12 +2269,24 @@ await listen("relay_active", async (event) => {
   addLog(`Relay active: ${event.payload?.relayAddr ?? "n/a"}`);
 });
 
+const peerLastBytes = {};
 await listen("peer-health", async (event) => {
-  const { peer_id, ping_ms } = event.payload;
+  const { peer_id, ping_ms, bytesRx, bytesTx } = event.payload;
+  const pId = event.payload.peerId || peer_id;
+  const pPing = event.payload.pingMs || ping_ms;
+
+  const last = peerLastBytes[pId] || { rx: 0, tx: 0 };
+  const deltaRx = Math.max(0, (bytesRx || 0) - last.rx);
+  const deltaTx = Math.max(0, (bytesTx || 0) - last.tx);
+  
+  currentBytesIn += deltaRx;
+  currentBytesOut += deltaTx;
+  peerLastBytes[pId] = { rx: bytesRx || 0, tx: bytesTx || 0 };
+
   if (state.status && state.status.peers) {
-    const peer = state.status.peers.find(p => p.peer_id === peer_id);
+    const peer = state.status.peers.find(p => p.peer_id === pId);
     if (peer) {
-      peer.ping_ms = ping_ms;
+      peer.ping_ms = pPing;
       renderPeers(state.status.peers);
     }
   }
@@ -2288,7 +2321,7 @@ refreshLobbyEl.addEventListener("click", async () => {
   await refreshLobby();
 });
 copyLogsEl.addEventListener("click", async () => {
-  await navigator.clipboard.writeText(currentLogLines().join("\n"));
+  await copyTextToClipboard(currentLogLines().join("\n"));
   addLog(t("copiedLog"));
 });
 copyDiagnosticsEl.addEventListener("click", async () => {
@@ -2307,14 +2340,14 @@ copySelectedEndpointEl.addEventListener("click", async () => {
   }
   
   if (!endpoint) return;
-  await navigator.clipboard.writeText(endpoint);
+  await copyTextToClipboard(endpoint);
   addLog(t("copiedIp"));
 });
 copySelectedBedrockEndpointEl.addEventListener("click", async () => {
   const selected = getSelectedServer();
   const endpoint = deriveBedrockEndpoint(selected?.peerAddr, selected?.bedrockPort);
   if (!endpoint) return;
-  await navigator.clipboard.writeText(endpoint);
+  await copyTextToClipboard(endpoint);
   addLog(t("copiedBedrockIp"));
 });
 runPreflightEl.addEventListener("click", async () => {
@@ -2398,21 +2431,21 @@ activeHostCardEl.addEventListener("click", async (event) => {
   if (javaValue) {
     // For the host: copy localhost:localPort (what players on the same machine use)
     const localAddr = `localhost:${hostSession.localPort || 25565}`;
-    await navigator.clipboard.writeText(localAddr);
+    await copyTextToClipboard(localAddr);
     addLog(t("copiedIp") + ` (${localAddr})`);
     setMinecraftHint(`${t("selectedAddressLabel")}: ${localAddr}`, true);
     return;
   }
   const copyPublic = target.closest("[data-copy-host-public]")?.dataset.copyHostPublic;
   if (copyPublic) {
-    await navigator.clipboard.writeText(copyPublic);
+    await copyTextToClipboard(copyPublic);
     addLog(t("copiedIp") + ` (${copyPublic})`);
     setMinecraftHint(`${t("selectedAddressLabel")}: ${copyPublic}`, true);
     return;
   }
   const bedrockValue = target.closest("[data-copy-host-bedrock]")?.dataset.copyHostBedrock;
   if (bedrockValue) {
-    await navigator.clipboard.writeText(bedrockValue);
+    await copyTextToClipboard(bedrockValue);
     addLog(t("copiedBedrockIp"));
   }
 });
@@ -2801,7 +2834,7 @@ async function initAuth() {
   // Copy User ID on click (uses storedDisplayId, updates textContent briefly)
   profileUserIdEl?.addEventListener("click", async () => {
     if (!storedDisplayId) return;
-    await navigator.clipboard.writeText(storedDisplayId).catch(() => {});
+    await copyTextToClipboard(storedDisplayId).catch(() => {});
     const orig = profileUserIdEl.textContent;
     profileUserIdEl.textContent = "Скопировано!";
     setTimeout(() => { if (profileUserIdEl.textContent === "Скопировано!") profileUserIdEl.textContent = orig; }, 1500);
