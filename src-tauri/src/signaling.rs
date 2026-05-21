@@ -154,20 +154,54 @@ pub async fn punch_remote(
     cancel: CancellationToken,
 ) -> Result<()> {
     let payload = format!("MCP2P-PUNCH|{room_code}|{peer_id}");
+    let base_port = remote.port();
 
-    for _ in 0..PUNCH_FAST_BURST_PACKETS {
+    // Создаем диапазон целевых портов (±20) для обхода Symmetric NAT (Port Prediction)
+    let mut targets = vec![remote];
+    for offset in 1..=20 {
+        if let Some(p) = base_port.checked_add(offset) {
+            let mut addr = remote;
+            addr.set_port(p);
+            targets.push(addr);
+        }
+        if let Some(p) = base_port.checked_sub(offset) {
+            let mut addr = remote;
+            addr.set_port(p);
+            targets.push(addr);
+        }
+    }
+
+    // Fast burst: быстро перебираем предсказанные порты
+    for i in 0..PUNCH_FAST_BURST_PACKETS {
         if cancel.is_cancelled() {
             break;
         }
-        socket.send_to(payload.as_bytes(), remote).await?;
+        
+        // Всегда бьем в базовый порт
+        let _ = socket.send_to(payload.as_bytes(), remote).await;
+        
+        // Также бьем в один из предсказанных портов в этом цикле
+        let target = targets[i % targets.len()];
+        if target != remote {
+            let _ = socket.send_to(payload.as_bytes(), target).await;
+        }
+
         tokio::time::sleep(Duration::from_millis(PUNCH_FAST_BURST_DELAY_MS)).await;
     }
 
-    for _ in 0..PUNCH_SUSTAIN_PACKETS {
+    // Sustain: поддерживаем активность
+    for i in 0..PUNCH_SUSTAIN_PACKETS {
         if cancel.is_cancelled() {
             break;
         }
-        socket.send_to(payload.as_bytes(), remote).await?;
+        
+        let _ = socket.send_to(payload.as_bytes(), remote).await;
+        
+        let target = targets[i % targets.len()];
+        if target != remote {
+            let _ = socket.send_to(payload.as_bytes(), target).await;
+        }
+        
         tokio::time::sleep(Duration::from_millis(PUNCH_SUSTAIN_DELAY_MS)).await;
     }
 
