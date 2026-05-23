@@ -673,12 +673,19 @@ function setPage(page) {
   navSettingsEl?.classList.toggle("nav-button-active", page === "settings");
 }
 
+const { getVersion } = window.__TAURI__.app;
+
 async function loadAppInfo() {
   try {
-    const info = await invoke("get_app_info");
-    settingsVersionEl.textContent = info.version;
+    const version = await getVersion();
+    settingsVersionEl.textContent = version;
   } catch {
-    settingsVersionEl.textContent = "0.3.33";
+    try {
+      const info = await invoke("get_app_info");
+      settingsVersionEl.textContent = info.version;
+    } catch {
+      settingsVersionEl.textContent = "0.3.38";
+    }
   }
 }
 
@@ -1952,7 +1959,7 @@ async function startHosting() {
   if (!canOpenHostModal()) return;
   const originalHostText = hostButtonEl.innerHTML;
   hostButtonEl.disabled = true;
-  hostButtonEl.innerHTML = `<span class="spinner"></span> <span>Запуск...</span>`;
+  hostButtonEl.innerHTML = `<svg class="animate-spin" style="animation: spin 1s linear infinite;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> <span>Запуск...</span>`;
   hostButtonEl.classList.add('loading-opacity');
 
   await detectMinecraftNickname();
@@ -2536,6 +2543,56 @@ document.querySelectorAll(".settings-tab").forEach(tab => {
     const targetEl = document.getElementById(`tab-${tab.dataset.tab}`);
     if (targetEl) targetEl.classList.add("active");
   });
+});
+
+profileMenuTriggerEl?.addEventListener("click", () => {
+  setPage("profile");
+});
+
+document.querySelectorAll(".custom-select").forEach(select => {
+  const trigger = select.querySelector(".custom-select-trigger");
+  const valueDisplay = select.querySelector(".custom-select-value");
+  const options = select.querySelectorAll(".custom-select-option");
+  const wrapper = select.closest(".custom-select-wrapper");
+  const targetSelectId = wrapper?.dataset.target;
+  const targetSelect = document.getElementById(targetSelectId);
+
+  // Sync initial value
+  if (targetSelect) {
+    const initialOption = select.querySelector(`[data-value="${targetSelect.value}"]`) || options[0];
+    if (initialOption) {
+      valueDisplay.innerHTML = initialOption.innerHTML;
+      initialOption.classList.add("selected");
+    }
+  }
+
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.querySelectorAll(".custom-select.open").forEach(s => {
+      if (s !== select) s.classList.remove("open");
+    });
+    select.classList.toggle("open");
+  });
+
+  options.forEach(option => {
+    option.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const val = option.dataset.value;
+      valueDisplay.innerHTML = option.innerHTML;
+      options.forEach(opt => opt.classList.remove("selected"));
+      option.classList.add("selected");
+      
+      if (targetSelect) {
+        targetSelect.value = val;
+        targetSelect.dispatchEvent(new Event("change"));
+      }
+      select.classList.remove("open");
+    });
+  });
+});
+
+document.addEventListener("click", () => {
+  document.querySelectorAll(".custom-select.open").forEach(s => s.classList.remove("open"));
 });
 
 setInterval(() => {
