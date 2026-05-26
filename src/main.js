@@ -1537,6 +1537,11 @@ function renderServers() {
               <span class="server-card-ping ${pingClass}">${pingVal}мс</span>
             </div>
           </div>
+          <div class="server-card-action" style="display: flex; align-items: center; margin-left: 12px;">
+            <button type="button" class="primary-button join-btn" data-connect-server="${escapeHtml(server.clientId)}" ${isLocal || isConnecting ? "disabled" : ""} style="padding: 8px 16px; min-width: 120px;">
+              ${escapeHtml(buttonLabel)}
+            </button>
+          </div>
         </article>
       `;
     })
