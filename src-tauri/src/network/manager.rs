@@ -148,6 +148,7 @@ impl NetworkManager {
         password: Option<String>,
         local_port: u16,
         enable_e4mc: bool,
+        minecraft_version: Option<String>,
     ) -> Result<String> {
         let room_name = room_name.trim().to_string();
         if room_name.is_empty() {
@@ -161,7 +162,7 @@ impl NetworkManager {
         self.reset_session().await;
 
         match self
-            .start_hosting_inner(app, room_name, password, local_port, enable_e4mc)
+            .start_hosting_inner(app, room_name, password, local_port, enable_e4mc, minecraft_version)
             .await
         {
             Ok(peer_addr) => Ok(peer_addr),
@@ -369,6 +370,7 @@ impl NetworkManager {
         password: Option<String>,
         local_port: u16,
         enable_e4mc: bool,
+        minecraft_version: Option<String>,
     ) -> Result<String> {
         let peer_id = Uuid::new_v4().to_string();
         let expected_peers = Arc::new(RwLock::new(HashMap::<SocketAddr, String>::new()));

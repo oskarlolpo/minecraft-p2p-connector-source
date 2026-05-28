@@ -51,6 +51,7 @@ async fn start_hosting(
     enable_geyser: bool,
     geyser_port: Option<u16>,
     enable_e4mc: Option<bool>,
+    minecraft_version: Option<String>,
 ) -> Result<SwarmBootstrap, String> {
     // Preflight: check that the local game port is actually reachable
     if let Err(e) = stun::preflight_port_check(local_port) {
@@ -67,6 +68,7 @@ async fn start_hosting(
             password,
             local_port,
             enable_e4mc.unwrap_or(state.manager.e4mc_enabled_by_default()),
+            minecraft_version,
         )
         .await
         .map_err(|error| format!("{error:#}"))?;

@@ -543,10 +543,22 @@
             </div>
           </div>
 
+          <div class="field">
+            <span data-i18n="modalGameVersionLabel">Версия игры</span>
+            <input type="hidden" id="game-version" value="java">
+            <div class="theme-chip-grid" id="game-version-chips">
+              <button type="button" class="theme-chip active" data-version-chip="java">
+                <span>Java Edition</span>
+              </button>
+              <button type="button" class="theme-chip" data-version-chip="bedrock">
+                <span>Bedrock Edition</span>
+              </button>
+            </div>
+          </div>
 
           <label class="field">
             <span class="field-inline">
-              <span data-i18n="modalPortLabel">Локальный Java-порт</span>
+              <span id="local-port-label" data-i18n="modalPortLabel">Локальный Java-порт</span>
               <div class="field-inline-actions">
                 <button id="auto-detect-port" class="mini-button" type="button" data-i18n="modalAutoPortButton">Auto</button>
                 <button class="help-badge" type="button" id="port-help" aria-label="Port help">?</button>
@@ -565,10 +577,12 @@
             <input id="room-password" type="password" autocomplete="new-password" maxlength="64" placeholder="Введите пароль" data-i18n-placeholder="modalPasswordPlaceholder" />
           </form>
 
-          <label class="checkbox-row">
-            <input id="enable-geyser" type="checkbox" />
-            <span data-i18n="modalGeyserToggle">Включить Bedrock bridge (Geyser)</span>
-          </label>
+          <div id="geyser-settings-container">
+            <label class="checkbox-row">
+              <input id="enable-geyser" type="checkbox" />
+              <span data-i18n="modalGeyserToggle">Включить Bedrock bridge (Geyser)</span>
+            </label>
+          </div>
 
           <label id="geyser-port-field" class="field hidden">
             <span data-i18n="modalBedrockPortLabel">Bedrock UDP-порт</span>

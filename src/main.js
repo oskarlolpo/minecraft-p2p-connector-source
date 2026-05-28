@@ -1154,8 +1154,8 @@ function renderSessionCard() {
           <h3 style="margin: 0 0 8px 0; color: var(--success); font-size: 18px; font-weight: 600;">Вы успешно подключены к другу!</h3>
           <p style="margin: 0 0 16px 0; color: var(--text-soft); font-size: 14px; line-height: 1.5;">Заходите в Minecraft и подключайтесь по этому адресу:</p>
           <div class="ip-box" style="display: inline-flex; gap: 12px; align-items: center; background: var(--surface-raised); border: 1px solid var(--line); padding: 8px 12px; border-radius: var(--radius-sm); box-shadow: 0 2px 8px rgba(0,0,0,0.2);">
-              <strong style="font-size: 1.1em; font-family: monospace; user-select: all; color: var(--text-base); letter-spacing: 0.5px;">127.0.0.1:25565</strong>
-              <button onclick="copyTextToClipboard('127.0.0.1:25565')" class="ghost-button" style="padding: 6px 12px; font-size: 13px; height: auto; min-height: 0; margin-left: 8px; display: inline-flex; align-items: center; gap: 6px;">
+              <strong style="font-size: 1.1em; font-family: monospace; user-select: all; color: var(--text-base); letter-spacing: 0.5px;">${escapeHtml(state.tunnelAddr ?? "127.0.0.1:25565")}</strong>
+              <button onclick="copyTextToClipboard('${escapeHtml(state.tunnelAddr ?? "127.0.0.1:25565")}')" class="ghost-button" style="padding: 6px 12px; font-size: 13px; height: auto; min-height: 0; margin-left: 8px; display: inline-flex; align-items: center; gap: 6px;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 Копировать
               </button>
@@ -2124,6 +2124,8 @@ async function startHosting() {
   const roomName = roomNameEl.value.trim();
   const roomThemeInput = document.getElementById("room-theme");
   const theme = roomThemeInput ? roomThemeInput.value : "other";
+  const gameVersionInput = document.getElementById("game-version");
+  const gameVersion = gameVersionInput && gameVersionInput.value === "bedrock" ? "Bedrock Edition" : "Java Edition";
   
   if (!roomName) {
     roomNameEl.focus();
@@ -2169,6 +2171,7 @@ async function startHosting() {
       localPort,
       enableGeyser,
       geyserPort,
+      minecraftVersion: gameVersion,
     });
     const status = await waitForStatus(
       (snapshot) => snapshot.mode === "host" && ["waitingForPeer", "hosting", "connected", "error"].includes(snapshot.state),
@@ -2439,7 +2442,8 @@ await listen("tunnel_established", async (event) => {
   state.tunnelReady = true;
   state.activeTunnelTransport = event.payload?.transport ?? state.activeTunnelTransport ?? "direct-quic";
   setMinecraftHint(t("hintConnected"), true);
-  const addr = event.payload?.minecraftAddr ?? "localhost:25565";
+  const addr = event.payload?.minecraftAddr ?? "127.0.0.1:25565";
+  state.tunnelAddr = addr;
   await copyTextToClipboard(addr);
   addLog(
     `${t("tunnelEstablishedLog", { addr })} (${formatTransportLabel(
@@ -2751,29 +2755,47 @@ profileMenuTriggerEl?.addEventListener("click", () => {
   setPage("profile");
 });
 
-// Theme chips in host modal
-document.querySelectorAll(".theme-chip").forEach(chip => {
-  chip.addEventListener("click", () => {
-    document.querySelectorAll(".theme-chip").forEach(c => c.classList.remove("active"));
-    chip.classList.add("active");
-    const roomThemeEl = document.getElementById("room-theme");
-    if (roomThemeEl) roomThemeEl.value = chip.dataset.themeChip;
-  });
-});
-
 // Host Creation Theme Chips logic
 const hostThemeChips = document.querySelectorAll("#host-theme-chips .theme-chip");
 const roomThemeInput = document.getElementById("room-theme");
 
 hostThemeChips.forEach(chip => {
   chip.addEventListener("click", () => {
-    // Remove active from all
     hostThemeChips.forEach(c => c.classList.remove("active"));
-    // Add active to clicked
     chip.classList.add("active");
-    // Update hidden input
     if (roomThemeInput) {
       roomThemeInput.value = chip.dataset.themeChip;
+    }
+  });
+});
+
+// Host Creation Game Version Chips logic
+const gameVersionChips = document.querySelectorAll("#game-version-chips .theme-chip");
+const gameVersionInput = document.getElementById("game-version");
+const localPortLabel = document.getElementById("local-port-label");
+const geyserSettingsContainer = document.getElementById("geyser-settings-container");
+const localGamePortInput = document.getElementById("local-game-port");
+
+gameVersionChips.forEach(chip => {
+  chip.addEventListener("click", () => {
+    gameVersionChips.forEach(c => c.classList.remove("active"));
+    chip.classList.add("active");
+    if (gameVersionInput) {
+      gameVersionInput.value = chip.dataset.versionChip;
+      
+      if (chip.dataset.versionChip === "bedrock") {
+        if (localPortLabel) localPortLabel.textContent = "Локальный Bedrock-порт";
+        if (geyserSettingsContainer) geyserSettingsContainer.style.display = "none";
+        if (localGamePortInput && localGamePortInput.value === "25565") {
+          localGamePortInput.value = "19132";
+        }
+      } else {
+        if (localPortLabel) localPortLabel.textContent = "Локальный Java-порт";
+        if (geyserSettingsContainer) geyserSettingsContainer.style.display = "block";
+        if (localGamePortInput && localGamePortInput.value === "19132") {
+          localGamePortInput.value = "25565";
+        }
+      }
     }
   });
 });
