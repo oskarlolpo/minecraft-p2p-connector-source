@@ -2646,6 +2646,26 @@ input, textarea {
   color: var(--text-muted);
 }
 
+.version-tag.java-tag {
+  color: #ef4444; /* red for java */
+  background: color-mix(in srgb, #ef4444 15%, transparent);
+  border-color: color-mix(in srgb, #ef4444 30%, transparent);
+}
+
+.version-tag.java-tag svg {
+  color: #ef4444;
+}
+
+.version-tag.bedrock-tag {
+  color: #3b82f6; /* blue for bedrock */
+  background: color-mix(in srgb, #3b82f6 15%, transparent);
+  border-color: color-mix(in srgb, #3b82f6 30%, transparent);
+}
+
+.version-tag.bedrock-tag svg {
+  color: #3b82f6;
+}
+
 .server-card-ping {
   font-size: 12px;
   font-weight: 700;

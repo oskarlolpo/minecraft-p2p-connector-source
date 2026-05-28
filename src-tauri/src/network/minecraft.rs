@@ -91,6 +91,25 @@ pub async fn probe_external_server(host: String, port: u16) -> Result<ExternalSe
 
 pub async fn build_preflight_report(port: u16) -> PreflightReport {
     if let Err(reachability_error) = probe_local_tcp(port).await {
+        // TCP reachability failed. However, for Bedrock (UDP) servers, TCP won't work.
+        // We fallback to checking if the port is actively listening in netstat.
+        let is_system_listener = task::spawn_blocking(move || {
+            detect_lan_ports_from_system_listeners().into_iter().any(|l| l.port == port)
+        })
+        .await
+        .unwrap_or(false);
+
+        if is_system_listener {
+            return PreflightReport {
+                local_port: port,
+                reachable: true,
+                state: LocalTargetState::Reachable,
+                minecraft_version: Some("Detected (UDP/Bedrock)".to_string()),
+                recommended_host_action: "Local Minecraft was detected via system listeners. You can launch the host.".into(),
+                note: Some(format!("TCP reachability failed, but port is open in netstat: {reachability_error:#}")),
+            };
+        }
+
         return PreflightReport {
             local_port: port,
             reachable: false,
@@ -99,7 +118,7 @@ pub async fn build_preflight_report(port: u16) -> PreflightReport {
             recommended_host_action:
                 "Open the world to LAN or start the local Minecraft server, then try hosting again.".into(),
             note: Some(format!(
-                "Local TCP reachability check failed: {reachability_error:#}"
+                "Local TCP reachability check failed and port not found in netstat: {reachability_error:#}"
             )),
         };
     }
@@ -498,125 +517,170 @@ struct JavaProcessMetadata {
 fn detect_lan_ports_from_system_listeners() -> Vec<LanPortDetection> {
     let java_processes = collect_java_process_metadata();
     
-    let output = match hidden_command("netstat").args(["-ano", "-p", "tcp"]).output() {
-        Ok(o) => o,
-        Err(_) => return Vec::new(),
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-
-    let content = String::from_utf8_lossy(&output.stdout);
     let mut candidates = Vec::new();
 
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with("TCP") {
-            continue;
-        }
-        let columns = trimmed.split_whitespace().collect::<Vec<_>>();
-        if columns.len() < 5 {
-            continue;
-        }
-        if !columns[3].eq_ignore_ascii_case("LISTENING") {
-            continue;
-        }
-
-        let local = columns[1];
-        let Ok(pid) = columns[4].parse::<u32>() else {
-            continue;
-        };
-        let Some((host, port)) = split_host_port_label(local) else {
-            continue;
-        };
-        if port == 0 || port < 1024 || !is_local_bind_host(&host) {
-            continue;
-        }
-
-        if let Some(meta) = java_processes.get(&pid) {
-            let mut priority = 0;
-            let cmd = meta.command_line.to_lowercase();
-            
-            // Try to find port in logs of this specific process
-            let mut detected_port = None;
-            if let Some(wd) = &meta.working_dir {
-                // Check latest.log in the working directory
-                let log_path = wd.join("logs").join("latest.log");
-                if log_path.exists() {
-                    if let Some(contents) = read_text_lossy(&log_path) {
-                        for line in contents.lines().rev().take(100) {
-                            if let Some(p) = extract_port_from_line(line) {
-                                detected_port = Some(p);
-                                break;
+    // 1. Check TCP (Java)
+    if let Ok(output) = hidden_command("netstat").args(["-ano", "-p", "tcp"]).output() {
+        if output.status.success() {
+            let content = String::from_utf8_lossy(&output.stdout);
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if !trimmed.starts_with("TCP") {
+                    continue;
+                }
+                let columns = trimmed.split_whitespace().collect::<Vec<_>>();
+                if columns.len() < 5 {
+                    continue;
+                }
+                if !columns[3].eq_ignore_ascii_case("LISTENING") {
+                    continue;
+                }
+        
+                let local = columns[1];
+                let Ok(pid) = columns[4].parse::<u32>() else {
+                    continue;
+                };
+                let Some((host, port)) = split_host_port_label(local) else {
+                    continue;
+                };
+                if port == 0 || port < 1024 || !is_local_bind_host(&host) {
+                    continue;
+                }
+        
+                if let Some(meta) = java_processes.get(&pid) {
+                    let mut priority = 0;
+                    let cmd = meta.command_line.to_lowercase();
+                    
+                    // Try to find port in logs of this specific process
+                    let mut detected_port = None;
+                    if let Some(wd) = &meta.working_dir {
+                        // Check latest.log in the working directory
+                        let log_path = wd.join("logs").join("latest.log");
+                        if log_path.exists() {
+                            if let Some(contents) = read_text_lossy(&log_path) {
+                                for line in contents.lines().rev().take(100) {
+                                    if let Some(p) = extract_port_from_line(line) {
+                                        detected_port = Some(p);
+                                        break;
+                                    }
+                                }
                             }
+                        }
+                    }
+        
+                    // 0. Base check: is it even likely to be Minecraft?
+                    let is_mc_related = cmd.contains("minecraft") 
+                        || cmd.contains(".minecraft")
+                        || cmd.contains("fabric-loader") 
+                        || cmd.contains("forge") 
+                        || cmd.contains("quilt") 
+                        || cmd.contains("net.minecraft")
+                        || cmd.contains("server.jar")
+                        || cmd.contains("papermc")
+                        || cmd.contains("spigot");
+        
+                    let is_javaw = cmd.contains("javaw");
+        
+                    if !is_mc_related && !is_javaw {
+                        priority -= 500;
+                    } else if is_mc_related {
+                        priority += 150; 
+                    } else {
+                        priority += 10; 
+                    }
+                    
+                    // 1. If it's the standard port 25565
+                    if port == 25565 {
+                        priority += 100;
+                    }
+                    
+                    // 2. If it matches the port found in THIS process's logs or config
+                    if let Some(p) = detected_port {
+                        if port == p {
+                            priority += 400; // Strong match!
+                        }
+                    }
+        
+                    if let Some(target) = meta.server_port {
+                        if port == target {
+                            priority += 250;
+                        }
+                    }
+                    
+                    // 3. Specific server jar checks
+                    if cmd.contains("purpur") || cmd.contains("paper") || cmd.contains("spigot") || cmd.contains("velocity") || cmd.contains("waterfall") {
+                        priority += 100;
+                    }
+        
+                    // 4. Client-side "Open to LAN" detection
+                    if is_mc_related && (cmd.contains("minecraft.applet") || cmd.contains("net.minecraft.client.main.main")) {
+                        priority += 80;
+                        if port > 49151 {
+                            priority += 70;
+                        }
+                    }
+        
+                    candidates.push((priority, port, pid, local.to_string(), "TCP"));
+                }
+            }
+        }
+    }
+
+    // 2. Check UDP (Bedrock)
+    if let Ok(output) = hidden_command("netstat").args(["-ano", "-p", "udp"]).output() {
+        if output.status.success() {
+            let content = String::from_utf8_lossy(&output.stdout);
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if !trimmed.starts_with("UDP") {
+                    continue;
+                }
+                let columns = trimmed.split_whitespace().collect::<Vec<_>>();
+                if columns.len() < 4 {
+                    continue;
+                }
+                
+                let local = columns[1];
+                let Ok(pid) = columns[3].parse::<u32>() else {
+                    continue;
+                };
+                let Some((host, port)) = split_host_port_label(local) else {
+                    continue;
+                };
+                if port == 0 || port < 1024 || !is_local_bind_host(&host) {
+                    continue;
+                }
+
+                if let Some(meta) = java_processes.get(&pid) {
+                    let cmd = meta.command_line.to_lowercase();
+                    if cmd.contains("minecraft.windows") {
+                        let mut priority = 200;
+                        if port == 19132 || port == 19133 {
+                            priority += 300;
+                        } else if port > 49151 {
+                            priority += 100; // Random high UDP port for LAN host
+                        }
+                        if port == 7551 {
+                            // 7551 is NetherNet/Xbox Live internal, not standard LAN port
+                            priority -= 500;
+                        }
+                        
+                        if priority > 0 {
+                            candidates.push((priority, port, pid, local.to_string(), "UDP"));
                         }
                     }
                 }
             }
-
-            // 0. Base check: is it even likely to be Minecraft?
-            let is_mc_related = cmd.contains("minecraft") 
-                || cmd.contains(".minecraft")
-                || cmd.contains("fabric-loader") 
-                || cmd.contains("forge") 
-                || cmd.contains("quilt") 
-                || cmd.contains("net.minecraft")
-                || cmd.contains("server.jar")
-                || cmd.contains("papermc")
-                || cmd.contains("spigot");
-
-            let is_javaw = cmd.contains("javaw");
-
-            if !is_mc_related && !is_javaw {
-                priority -= 500;
-            } else if is_mc_related {
-                priority += 150; 
-            } else {
-                priority += 10; 
-            }
-            
-            // 1. If it's the standard port 25565
-            if port == 25565 {
-                priority += 100;
-            }
-            
-            // 2. If it matches the port found in THIS process's logs or config
-            if let Some(p) = detected_port {
-                if port == p {
-                    priority += 400; // Strong match!
-                }
-            }
-
-            if let Some(target) = meta.server_port {
-                if port == target {
-                    priority += 250;
-                }
-            }
-            
-            // 3. Specific server jar checks
-            if cmd.contains("purpur") || cmd.contains("paper") || cmd.contains("spigot") || cmd.contains("velocity") || cmd.contains("waterfall") {
-                priority += 100;
-            }
-
-            // 4. Client-side "Open to LAN" detection
-            if is_mc_related && (cmd.contains("minecraft.applet") || cmd.contains("net.minecraft.client.main.main")) {
-                priority += 80;
-                if port > 49151 {
-                    priority += 70;
-                }
-            }
-
-            candidates.push((priority, port, pid, local.to_string()));
         }
     }
 
     candidates.sort_by(|a, b| b.0.cmp(&a.0));
 
-    candidates.into_iter().map(|(prio, port, pid, local)| {
+    candidates.into_iter().map(|(prio, port, pid, local, proto)| {
         LanPortDetection {
             port,
             source_path: "system:netstat+ps".into(),
-            source_line: format!("netstat LISTENING {} pid {} (priority {})", local, pid, prio),
+            source_line: format!("netstat {} {} pid {} (priority {})", proto, local, pid, prio),
         }
     }).collect()
 }
@@ -628,8 +692,8 @@ fn detect_lan_port_from_system_listeners() -> Option<LanPortDetection> {
 fn collect_java_process_metadata() -> HashMap<u32, JavaProcessMetadata> {
     let mut map = HashMap::new();
     
-    // ИСПРАВЛЕНИЕ: Добавлен javaw.exe, через который запускаются клиентские миры.
-    let ps_script = "Get-CimInstance Win32_Process -Filter \"name = 'java.exe' OR name = 'javaw.exe'\" | Select-Object ProcessId, CommandLine, WorkingDirectory | ConvertTo-Json";
+    // ИСПРАВЛЕНИЕ: Добавлен javaw.exe и Minecraft.Windows.exe.
+    let ps_script = "Get-CimInstance Win32_Process -Filter \"name = 'java.exe' OR name = 'javaw.exe' OR name = 'Minecraft.Windows.exe'\" | Select-Object ProcessId, CommandLine, WorkingDirectory | ConvertTo-Json";
     let output = hidden_command("powershell")
         .args(["-Command", ps_script])
         .output();
