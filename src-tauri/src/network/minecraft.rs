@@ -90,6 +90,18 @@ pub async fn probe_external_server(host: String, port: u16) -> Result<ExternalSe
 }
 
 pub async fn build_preflight_report(port: u16) -> PreflightReport {
+    // Always detect the best Bedrock LAN port from system listeners
+    // (e.g. port 7551 when a world is opened to LAN)
+    let detected_lan_port = task::spawn_blocking(|| {
+        detect_lan_ports_from_system_listeners()
+            .into_iter()
+            .find(|l| l.source_line.contains("UDP"))
+            .map(|l| l.port)
+    })
+    .await
+    .ok()
+    .flatten();
+
     if let Err(reachability_error) = probe_local_tcp(port).await {
         // TCP reachability failed. However, for Bedrock (UDP) servers, TCP won't work.
         // We fallback to checking if the port is actively listening in netstat.
@@ -107,6 +119,7 @@ pub async fn build_preflight_report(port: u16) -> PreflightReport {
                 minecraft_version: Some("Detected (UDP/Bedrock)".to_string()),
                 recommended_host_action: "Local Minecraft was detected via system listeners. You can launch the host.".into(),
                 note: Some(format!("TCP reachability failed, but port is open in netstat: {reachability_error:#}")),
+                detected_lan_port,
             };
         }
 
@@ -120,6 +133,7 @@ pub async fn build_preflight_report(port: u16) -> PreflightReport {
             note: Some(format!(
                 "Local TCP reachability check failed and port not found in netstat: {reachability_error:#}"
             )),
+            detected_lan_port,
         };
     }
 
@@ -138,6 +152,7 @@ pub async fn build_preflight_report(port: u16) -> PreflightReport {
                 recommended_host_action:
                     "Local Minecraft is reachable. You can launch the host and publish the room.".into(),
                 note: Some(note),
+                detected_lan_port,
             }
         },
         Err(version_error) => {
@@ -149,6 +164,7 @@ pub async fn build_preflight_report(port: u16) -> PreflightReport {
                 recommended_host_action:
                     "The TCP port is reachable, but Minecraft version detection failed. You can still launch the host.".into(),
                 note: Some(format!("Version detection failed during status ping: {version_error:#}")),
+                detected_lan_port,
             }
         }
     }
@@ -655,16 +671,28 @@ fn detect_lan_ports_from_system_listeners() -> Vec<LanPortDetection> {
                     let cmd = meta.command_line.to_lowercase();
                     if cmd.contains("minecraft.windows") {
                         let mut priority = 200;
+
+                        // Standard Bedrock dedicated server ports
                         if port == 19132 || port == 19133 {
                             priority += 300;
-                        } else if port > 49151 {
-                            priority += 100; // Random high UDP port for LAN host
                         }
-                        if port == 7551 {
-                            // 7551 is NetherNet/Xbox Live internal, not standard LAN port
-                            priority -= 500;
+                        // Port 7551: confirmed as the main LAN broadcast + game port
+                        // when opening a Bedrock world to LAN (binds 0.0.0.0 and broadcasts
+                        // on subnet:7551 every ~2s for LAN discovery)
+                        else if port == 7551 {
+                            priority += 250;
                         }
-                        
+                        // Other high ports (ephemeral game session ports)
+                        else if port > 49151 {
+                            priority += 50;
+                        }
+
+                        // Bonus: if bound to 0.0.0.0 or [::] — it accepts all interfaces,
+                        // which is a strong signal that this is the main listening port
+                        if host == "0.0.0.0" || host == "::" || host == "0" {
+                            priority += 100;
+                        }
+
                         if priority > 0 {
                             candidates.push((priority, port, pid, local.to_string(), "UDP"));
                         }

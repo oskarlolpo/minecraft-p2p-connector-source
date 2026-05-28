@@ -2832,7 +2832,7 @@ const geyserSettingsContainer = document.getElementById("geyser-settings-contain
 const localGamePortInput = document.getElementById("local-game-port");
 
 gameVersionChips.forEach(chip => {
-  chip.addEventListener("click", () => {
+  chip.addEventListener("click", async () => {
     gameVersionChips.forEach(c => c.classList.remove("active"));
     chip.classList.add("active");
     if (gameVersionInput) {
@@ -2841,8 +2841,19 @@ gameVersionChips.forEach(chip => {
       if (chip.dataset.versionChip === "bedrock") {
         if (localPortLabel) localPortLabel.textContent = "Локальный Bedrock-порт";
         if (geyserSettingsContainer) geyserSettingsContainer.style.display = "none";
-        if (localGamePortInput && localGamePortInput.value === "25565") {
-          localGamePortInput.value = "19132";
+        // Try to auto-detect the actual Bedrock LAN port (e.g. 7551, not always 19132)
+        try {
+          const report = await invoke("run_preflight");
+          const bedrockPort = report?.detected_lan_port;
+          if (bedrockPort && bedrockPort > 0) {
+            if (localGamePortInput) localGamePortInput.value = String(bedrockPort);
+          } else if (localGamePortInput && localGamePortInput.value === "25565") {
+            localGamePortInput.value = "19132";
+          }
+        } catch {
+          if (localGamePortInput && localGamePortInput.value === "25565") {
+            localGamePortInput.value = "19132";
+          }
         }
       } else {
         if (localPortLabel) localPortLabel.textContent = "Локальный Java-порт";

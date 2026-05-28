@@ -130,6 +130,8 @@ pub struct PreflightReport {
     pub minecraft_version: Option<String>,
     pub recommended_host_action: String,
     pub note: Option<String>,
+    /// Auto-detected LAN port from running Minecraft process (e.g. Bedrock port 7551)
+    pub detected_lan_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
