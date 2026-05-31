@@ -247,7 +247,12 @@ async fn detect_client_runtime_info_command() -> Result<MinecraftClientRuntimeIn
 async fn get_local_player_snapshot_command(port: u16) -> Result<LocalPlayerSnapshot, String> {
     read_local_player_snapshot(port)
         .await
-        .map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+async fn get_latest_bedrock_world_name_command() -> Result<String, String> {
+    network::minecraft::get_latest_bedrock_world_name()
+        .ok_or_else(|| "Could not find latest Bedrock world name".to_string())
 }
 
 #[tauri::command]
@@ -498,6 +503,7 @@ fn main() {
             detect_minecraft_nickname_command,
             detect_client_runtime_info_command,
             get_local_player_snapshot_command,
+            get_latest_bedrock_world_name_command,
             query_external_server,
             get_app_info,
             check_for_updates,

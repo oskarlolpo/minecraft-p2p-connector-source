@@ -60,10 +60,59 @@ pub async fn detect_local_version(port: u16) -> Result<String> {
 
     Err(last_error.unwrap_or_else(|| anyhow!("failed to get a valid Minecraft status response")))
 }
+fn probe_bedrock_server_sync(host: &str, port: u16) -> Result<ExternalServerProbe> {
+    let start = std::time::Instant::now();
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").context("Failed to bind UDP socket")?;
+    socket.set_read_timeout(Some(std::time::Duration::from_millis(800)))?;
+    socket.set_write_timeout(Some(std::time::Duration::from_millis(800)))?;
+    
+    let mut req = vec![0x01]; // Unconnected Ping
+    let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+    req.extend_from_slice(&time.to_be_bytes()); // time
+    req.extend_from_slice(&[0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78]); // magic
+    req.extend_from_slice(&[0u8; 8]); // client guid
+
+    socket.send_to(&req, format!("{}:{}", host, port)).context("Failed to send UDP ping")?;
+    
+    let mut buf = [0u8; 1024];
+    let (len, _) = socket.recv_from(&mut buf).context("UDP read timeout or fail")?;
+    
+    if len > 35 && buf[0] == 0x1C {
+        // Unconnected Pong
+        let str_len = u16::from_be_bytes([buf[33], buf[34]]) as usize;
+        if 35 + str_len <= len {
+            let server_id = String::from_utf8_lossy(&buf[35..35+str_len]);
+            let parts: Vec<&str> = server_id.split(';').collect();
+            if parts.len() >= 6 {
+                let name = parts[1].to_string();
+                let version = parts[3].to_string();
+                let online_players: u32 = parts[4].parse().unwrap_or(0);
+                let max_players: u32 = parts[5].parse().unwrap_or(0);
+                
+                return Ok(ExternalServerProbe {
+                    room_name: name.clone(),
+                    host_name: name,
+                    version: Some(version),
+                    online_players,
+                    max_players,
+                    ping_ms: Some(start.elapsed().as_millis() as u64),
+                });
+            }
+        }
+    }
+    anyhow::bail!("Invalid or no Bedrock response")
+}
 
 pub async fn probe_external_server(host: String, port: u16) -> Result<ExternalServerProbe> {
     let start = std::time::Instant::now();
     let mut last_error = None;
+    
+    if let Ok(Ok(bedrock_probe)) = task::spawn_blocking({
+        let host = host.clone();
+        move || probe_bedrock_server_sync(&host, port)
+    }).await {
+        return Ok(bedrock_probe);
+    }
     for protocol_version in STATUS_PROTOCOL_CANDIDATES {
         match query_status(&host, port, *protocol_version).await {
             Ok(response) => {
@@ -945,6 +994,55 @@ fn collect_nickname_sources() -> Vec<PathBuf> {
     files.dedup();
 
     files
+}
+
+pub fn get_latest_bedrock_world_name() -> Option<String> {
+    let local_app_data = std::env::var_os("LOCALAPPDATA")?;
+    let worlds_dir = PathBuf::from(local_app_data)
+        .join("Packages")
+        .join("Microsoft.4297127D64EC6_8wekyb3d8bbwe")
+        .join("LocalState")
+        .join("games")
+        .join("com.mojang")
+        .join("minecraftWorlds");
+
+    if !worlds_dir.exists() || !worlds_dir.is_dir() {
+        return None;
+    }
+
+    let mut latest_world: Option<(PathBuf, std::time::SystemTime)> = None;
+
+    if let Ok(entries) = fs::read_dir(&worlds_dir) {
+        for entry in entries.flatten() {
+            if let Ok(metadata) = entry.metadata() {
+                if metadata.is_dir() {
+                    if let Ok(modified) = metadata.modified() {
+                        if let Some((_, latest_time)) = latest_world {
+                            if modified > latest_time {
+                                latest_world = Some((entry.path(), modified));
+                            }
+                        } else {
+                            latest_world = Some((entry.path(), modified));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some((path, _)) = latest_world {
+        let levelname_path = path.join("levelname.txt");
+        if levelname_path.exists() {
+            if let Some(contents) = read_text_lossy(&levelname_path) {
+                let trimmed = contents.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn parse_nickname_from_file(path: &Path, contents: &str) -> Option<String> {

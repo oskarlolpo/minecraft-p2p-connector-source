@@ -18,6 +18,7 @@ async function copyTextToClipboard(text) {
   } catch (err) { console.error(err); }
   document.body.removeChild(textArea);
 }
+window.copyTextToClipboard = copyTextToClipboard;
 
 import * as Ably from "ably";
 import { listen as tauriListen } from "@tauri-apps/api/event";
@@ -627,9 +628,28 @@ async function autofillRoomNameFromLocalServer() {
     if (!roomNameEl.value.trim() || roomNameEl.dataset.autofilled === "true") {
       roomNameEl.value = detectedName;
       roomNameEl.dataset.autofilled = "true";
+      if (probe?.maxPlayers) {
+        roomNameEl.dataset.maxPlayers = probe.maxPlayers;
+      }
     }
   } catch {
-    // Ignore
+    const isBedrock = document.getElementById("game-version")?.value === "bedrock";
+    if (isBedrock && (!roomNameEl.value.trim() || roomNameEl.dataset.autofilled === "true")) {
+      roomNameEl.value = state.profile.nickname ? `${state.profile.nickname} World` : "Bedrock World";
+      roomNameEl.dataset.autofilled = "true";
+      try {
+        const bedrockName = await invoke("get_latest_bedrock_world_name_command");
+        if (bedrockName) {
+          roomNameEl.value = bedrockName;
+          roomNameEl.dataset.autofilled = "true";
+          roomNameEl.dataset.maxPlayers = "8";
+          return;
+        }
+      } catch (e) {
+        console.warn("Failed to auto-detect Bedrock world name:", e);
+      }
+      roomNameEl.dataset.maxPlayers = "8"; // Default bedrock max players
+    }
   }
 }
 
@@ -1134,7 +1154,9 @@ function renderSessionCard() {
   const publicJavaEndpoint = getAdvertisableJoinAddress(status);
   const hostBedrockEndpoint = deriveBedrockEndpoint(status?.publicUdpAddr, status?.bedrockPort);
   const online = Math.max(1, (status?.peerCount ?? 0) + 1);
-  const maxPlayers = Math.max(online, hostSession.maxPlayers ?? 30);
+  const isBedrock = hostSession.isBedrock ?? (version === "Bedrock Edition");
+  const maxLimit = hostSession.maxPlayers || (isBedrock ? 8 : 30);
+  const maxPlayersText = `${online}/${Math.max(online, maxLimit)}`;
 
   if (mode === "client") {
     hostSectionTitleEl.textContent = t("clientSessionTitle");
@@ -1208,9 +1230,9 @@ function renderSessionCard() {
       <div class="host-avatar">MC</div>
       <div class="host-details">
         <h3>${parseMinecraftColors(hostSession.roomName)}</h3>
-        <p>${escapeHtml(t("hostCardPlayers", { count: `${online}/${maxPlayers}` }))}</p>
+        <p>${escapeHtml(t("hostCardPlayers", { count: maxPlayersText }))}</p>
         <div class="host-meta-row">
-          <span class="host-meta-pill">${escapeHtml(t("hostCardVersion", { version }))}</span>
+          <span class="host-meta-pill">${escapeHtml(isBedrock ? version : t("hostCardVersion", { version }))}</span>
           <span class="host-meta-pill">${escapeHtml(t("hostCardPort", { port: hostSession.localPort }))}</span>
           <span class="host-meta-pill">${escapeHtml(hostSession.hasPassword ? t("hostCardPasswordOn") : t("hostCardPasswordOff"))}</span>
           ${
@@ -1220,9 +1242,9 @@ function renderSessionCard() {
           }
         </div>
         <div class="active-host-tools">
-          <button class="ghost-button" type="button" data-copy-host-java="true">${escapeHtml(t("copyIpButton"))} (local)</button>
-          ${publicJavaEndpoint ? `<button class="primary-button" type="button" data-copy-host-public="${escapeHtml(toSocketEndpoint(publicJavaEndpoint) ?? publicJavaEndpoint)}">${escapeHtml(t("copyIpButton"))} (public)</button>` : ""}
-          ${hostBedrockEndpoint ? `<button class="ghost-button" type="button" data-copy-host-bedrock="${escapeHtml(hostBedrockEndpoint)}">${escapeHtml(t("copyBedrockIpButton"))}</button>` : ""}
+          <button class="ghost-button" type="button" data-copy-host-java="true">${escapeHtml(isBedrock ? t("copyBedrockIpButton") : t("copyIpButton"))} (local)</button>
+          ${publicJavaEndpoint ? `<button class="primary-button" type="button" data-copy-host-public="${escapeHtml(toSocketEndpoint(publicJavaEndpoint) ?? publicJavaEndpoint)}">${escapeHtml(isBedrock ? t("copyBedrockIpButton") : t("copyIpButton"))} (public)</button>` : ""}
+          ${hostBedrockEndpoint && !isBedrock ? `<button class="ghost-button" type="button" data-copy-host-bedrock="${escapeHtml(hostBedrockEndpoint)}">${escapeHtml(t("copyBedrockIpButton"))}</button>` : ""}
         </div>
       </div>
     </div>
@@ -2225,20 +2247,38 @@ async function startHosting() {
     hostSession.listenAddrs = collectAdvertisedAddrs(bootstrap, status);
     hostSession.peerAddr = advertisedEndpoint(hostSession.listenAddrs, status.publicUdpAddr ?? status.udpBindAddr);
     hostSession.localPort = localPort;
-    hostSession.minecraftVersion = status.minecraftVersion ?? null;
+    hostSession.minecraftVersion = status.minecraftVersion ?? gameVersion;
+    hostSession.isBedrock = gameVersion === "Bedrock Edition";
     hostSession.theme = theme;
     hostSession.publicJoinAddress = status.publicJoinAddress ?? null;
     try {
-      const localMeta = await invoke("query_external_server", { host: "127.0.0.1", port: localPort });
+      let localMeta = null;
+      try {
+        localMeta = await invoke("query_external_server", { host: "127.0.0.1", port: localPort });
+      } catch (e) {
+        console.warn("query_external_server failed (expected for Bedrock):", e);
+      }
+
       if (localMeta?.roomName) {
         hostSession.roomName = localMeta.roomName;
         roomNameEl.value = localMeta.roomName;
         roomNameEl.dataset.autofilled = "true";
+      } else if (gameVersion === "Bedrock Edition") {
+        try {
+          const bedrockName = await invoke("get_latest_bedrock_world_name_command");
+          if (bedrockName) {
+            hostSession.roomName = bedrockName;
+            roomNameEl.value = bedrockName;
+            roomNameEl.dataset.autofilled = "true";
+          }
+        } catch (e) {
+          console.warn("Failed to get latest bedrock world name:", e);
+        }
       }
       const maxPlayers = Number(localMeta?.maxPlayers ?? 0);
-      hostSession.maxPlayers = maxPlayers > 0 ? maxPlayers : 30;
+      hostSession.maxPlayers = maxPlayers > 0 ? maxPlayers : (gameVersion === "Bedrock Edition" ? 8 : 30);
     } catch {
-      hostSession.maxPlayers = 30;
+      hostSession.maxPlayers = gameVersion === "Bedrock Edition" ? 8 : 30;
     }
     hostSession.presencePayload = null;
     hostSession.presenceEntered = false;
@@ -2489,7 +2529,7 @@ await listen("tunnel_established", async (event) => {
   setMinecraftHint(t("hintConnected"), true);
   
   let addr = event.payload?.minecraftAddr ?? "127.0.0.1:25565";
-  const selectedServer = state.serverList.find((s) => s.clientId === state.selectedServerId);
+  const selectedServer = state.servers.find((s) => s.clientId === state.selectedServerId);
   const version = selectedServer?.minecraft_version || selectedServer?.client_minecraft_version || "";
   
   if (version.includes("Bedrock")) {
@@ -2631,7 +2671,7 @@ copySelectedEndpointEl?.addEventListener("click", async () => {
   let endpoint = null;
   
   if (state.tunnelReady && state.selectedServerId === selected?.clientId) {
-    endpoint = "localhost:25565"; // Default proxy port
+    endpoint = state.tunnelAddr || "localhost:25565"; // Default proxy port
   } else {
     endpoint = selected?.publicJoinAddress ??
       selected?.joinAddress ??
@@ -2730,15 +2770,17 @@ activeHostCardEl?.addEventListener("click", async (event) => {
   if (javaValue) {
     // For the host: copy localhost:localPort (what players on the same machine use)
     const localAddr = `localhost:${hostSession.localPort || 25565}`;
+    const isBedrockHost = state.status?.minecraftVersion === "Bedrock Edition";
     await copyTextToClipboard(localAddr);
-    addLog(t("copiedIp") + ` (${localAddr})`);
+    addLog((isBedrockHost ? t("copiedBedrockIp") : t("copiedIp")) + ` (${localAddr})`);
     setMinecraftHint(`${t("selectedAddressLabel")}: ${localAddr}`, true);
     return;
   }
   const copyPublic = target.closest("[data-copy-host-public]")?.dataset.copyHostPublic;
   if (copyPublic) {
+    const isBedrockHost = state.status?.minecraftVersion === "Bedrock Edition";
     await copyTextToClipboard(copyPublic);
-    addLog(t("copiedIp") + ` (${copyPublic})`);
+    addLog((isBedrockHost ? t("copiedBedrockIp") : t("copiedIp")) + ` (${copyPublic})`);
     setMinecraftHint(`${t("selectedAddressLabel")}: ${copyPublic}`, true);
     return;
   }

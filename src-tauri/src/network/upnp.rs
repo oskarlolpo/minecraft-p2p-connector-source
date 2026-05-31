@@ -95,31 +95,65 @@ impl UpnpMapping {
 }
 
 pub fn get_local_ip() -> Result<std::net::IpAddr> {
-    // Лучший и самый надежный способ определить основной интерфейс,
-    // имеющий доступ в интернет, — позволить ОС выбрать маршрут.
-    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("8.8.8.8:80").is_ok() {
-            if let Ok(local_addr) = socket.local_addr() {
-                return Ok(local_addr.ip());
-            }
-        }
-    }
-
-    // Если интернета нет, пытаемся найти хоть какой-то IPv4
+    let mut valid_ips = Vec::new();
     if let Ok(interfaces) = get_if_addrs::get_if_addrs() {
         for iface in interfaces {
             let name = iface.name.to_lowercase();
-            // Пропускаем виртуальные и loopback интерфейсы
-            if name.contains("loopback") || name.contains("docker") || name.contains("wsl") || name.contains("vethernet") || name.contains("virtual") || name.contains("vmware") || name.contains("vbox") || name.contains("tun") || name.contains("tap") || name.contains("vpn") || name.contains("radmin") {
+            // Skip virtual and loopback interfaces
+            if name.contains("loopback") || name.contains("docker") || name.contains("wsl") 
+                || name.contains("vethernet") || name.contains("virtual") || name.contains("vmware") 
+                || name.contains("vbox") || name.contains("tun") || name.contains("tap") 
+                || name.contains("vpn") || name.contains("radmin") || name.contains("hyper-v") {
                 continue;
             }
             
             if let get_if_addrs::IfAddr::V4(addr) = iface.addr {
-                if !addr.ip.is_loopback() {
-                    return Ok(std::net::IpAddr::V4(addr.ip));
+                if !addr.ip.is_loopback() && !addr.ip.is_link_local() {
+                    // Explicitly ignore common WSL/Docker subnets 172.17.x.x - 172.31.x.x
+                    // and Hamachi/Radmin 26.x.x.x
+                    let oct = addr.ip.octets();
+                    if oct[0] == 172 && (16..=31).contains(&oct[1]) {
+                        continue;
+                    }
+                    if oct[0] == 26 {
+                        continue;
+                    }
+                    valid_ips.push(std::net::IpAddr::V4(addr.ip));
                 }
             }
         }
+    }
+
+    // Try routing via OS default
+    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(local_addr) = socket.local_addr() {
+                let ip = local_addr.ip();
+                if valid_ips.contains(&ip) {
+                    return Ok(ip);
+                } else if let std::net::IpAddr::V4(v4) = ip {
+                    let oct = v4.octets();
+                    // Use it only if it's not a common virtual subnet or Radmin VPN
+                    if !(oct[0] == 172 && (16..=31).contains(&oct[1])) && oct[0] != 26 {
+                        return Ok(ip);
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort to prefer 192.168.x.x, then 10.x.x.x
+    valid_ips.sort_by_key(|ip| {
+        if let std::net::IpAddr::V4(v4) = ip {
+            let oct = v4.octets();
+            if oct[0] == 192 && oct[1] == 168 { return 0; }
+            if oct[0] == 10 { return 1; }
+        }
+        2
+    });
+
+    if let Some(ip) = valid_ips.first() {
+        return Ok(*ip);
     }
     
     anyhow::bail!("Не удалось найти локальный IP адрес")
