@@ -135,7 +135,6 @@ fn rand_tx_id() -> [u8; 12] {
 /// - Если IP одинаковый, но порты разные → Symmetric NAT  
 /// - Если один из запросов фейлит → Restricted / Firewall
 pub async fn detect_nat_type() -> NatTypeResult {
-pub async fn detect_nat_type() -> NatTypeResult {
     let bind_addr = SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0);
     let socket = match UdpSocket::bind(bind_addr).await {
         Ok(s) => s,

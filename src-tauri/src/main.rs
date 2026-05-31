@@ -247,6 +247,7 @@ async fn detect_client_runtime_info_command() -> Result<MinecraftClientRuntimeIn
 async fn get_local_player_snapshot_command(port: u16) -> Result<LocalPlayerSnapshot, String> {
     read_local_player_snapshot(port)
         .await
+        .map_err(|error| format!("{error:#}"))
 }
 
 #[tauri::command]
