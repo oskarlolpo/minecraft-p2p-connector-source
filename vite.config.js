@@ -1,6 +1,8 @@
 import { defineConfig } from "vite";
+import vue from "@vitejs/plugin-vue";
 
 export default defineConfig({
+  plugins: [vue()],
   root: "src",
   publicDir: false,
   clearScreen: false,
@@ -13,11 +15,5 @@ export default defineConfig({
     outDir: "../dist",
     target: "es2022",
     emptyOutDir: true,
-    rollupOptions: {
-      input: {
-        main: "src/index.html",
-        callback: "src/callback.html"
-      }
-    }
   },
 });

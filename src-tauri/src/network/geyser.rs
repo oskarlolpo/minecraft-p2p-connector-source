@@ -11,7 +11,7 @@ use anyhow::{anyhow, Context, Result};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::{sync::Mutex, task};
 
-use crate::models::GeyserRuntimeInfo;
+use p2p_core::models::GeyserRuntimeInfo;
 
 const DEFAULT_BEDROCK_PORT: u16 = 19132;
 const GEYSER_JAR_NAME: &str = "Geyser-Standalone.jar";
@@ -25,7 +25,7 @@ pub struct GeyserManager {
 struct GeyserState {
     child: Option<Child>,
     info: GeyserRuntimeInfo,
-    upnp_mapping: Option<crate::network::upnp::UpnpMapping>,
+    upnp_mapping: Option<p2p_core::upnp::UpnpMapping>,
 }
 
 impl GeyserManager {
@@ -88,7 +88,7 @@ impl GeyserManager {
         let inner_clone = self.inner.clone();
         let description = format!("Minecraft P2P Geyser ({room_name})");
         tokio::spawn(async move {
-            if let Ok(mapping) = crate::network::upnp::UpnpMapping::attempt_map(
+            if let Ok(mapping) = p2p_core::upnp::UpnpMapping::attempt_map(
                 resolved_bedrock_port, 
                 &description
             ).await {
@@ -369,7 +369,13 @@ fn ensure_firewall_rule(port: u16) -> Result<String> {
     #[cfg(target_os = "windows")]
     {
         let rule_name = format!("Minecraft P2P Connector Bedrock UDP {port}");
-        let _ = Command::new("netsh")
+        let mut command = Command::new("netsh");
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let _ = command
             .args([
                 "advfirewall",
                 "firewall",
@@ -381,7 +387,13 @@ fn ensure_firewall_rule(port: u16) -> Result<String> {
             .stderr(Stdio::null())
             .status();
 
-        let status = Command::new("netsh")
+        let mut command = Command::new("netsh");
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let status = command
             .args([
                 "advfirewall",
                 "firewall",

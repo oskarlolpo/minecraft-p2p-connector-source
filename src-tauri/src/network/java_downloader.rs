@@ -62,7 +62,13 @@ pub async fn ensure_java_ready(app: &AppHandle) -> Result<String> {
     let java_path = resolve_java_binary();
     
     // Check if java -version works
-    let output = std::process::Command::new(&java_path)
+    let mut command = std::process::Command::new(&java_path);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let output = command
         .arg("-version")
         .output();
 

@@ -3,26 +3,23 @@
     windows_subsystem = "windows"
 )]
 
-mod cert;
-mod models;
 mod network;
-mod signaling;
 
-use network::minecraft::{
-    build_preflight_report, detect_client_runtime_info, detect_lan_port_from_logs,
-    detect_minecraft_nickname, get_available_lan_ports_command, probe_external_server,
+use p2p_core::minecraft::{
+    build_preflight_report, detect_client_runtime_info,
+    detect_minecraft_nickname, probe_external_server,
     read_local_player_snapshot,
 };
-use network::manager::NetworkManager;
+use p2p_core::manager::NetworkManager;
 use network::geyser::GeyserManager;
-use network::stun;
-use network::test_server::{probe_test_server, TestServerManager};
-use models::{
+use p2p_core::stun;
+use p2p_core::test_server::{probe_test_server, TestServerManager};
+use p2p_core::models::{
     AppInfo, DiagnosticSnapshot, ExternalServerProbe, InstallUpdateResult, LanPortDetection,
     LocalPlayerSnapshot, MinecraftClientRuntimeInfo, MinecraftNicknameDetection, NetworkStatus,
     PreflightReport, SwarmBootstrap, TestServerInfo, UpdateCheckResult,
 };
-use network::stun::NatTypeResult;
+use p2p_core::stun::NatTypeResult;
 use std::{path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, State, Emitter};
 use tokio::sync::Mutex;
@@ -41,6 +38,17 @@ struct AppState {
     last_preflight: std::sync::Arc<Mutex<Option<PreflightReport>>>,
 }
 
+fn wrap_app_handle(app: tauri::AppHandle) -> p2p_core::tauri_shim::AppHandle {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<p2p_core::tauri_shim::Event>();
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            let _ = app_clone.emit(&event.name, event.payload);
+        }
+    });
+    p2p_core::tauri_shim::AppHandle::new(tx)
+}
+
 #[tauri::command]
 async fn start_hosting(
     app: AppHandle,
@@ -52,6 +60,7 @@ async fn start_hosting(
     geyser_port: Option<u16>,
     enable_e4mc: Option<bool>,
     minecraft_version: Option<String>,
+    force_direct: Option<bool>,
 ) -> Result<SwarmBootstrap, String> {
     // Preflight: check that the local game port is actually reachable
     if let Err(e) = stun::preflight_port_check(local_port) {
@@ -63,12 +72,13 @@ async fn start_hosting(
     let public_addr = state
         .manager
         .start_hosting(
-            app.clone(),
+            wrap_app_handle(app.clone()),
             room_name,
             password,
             local_port,
             enable_e4mc.unwrap_or(state.manager.e4mc_enabled_by_default()),
             minecraft_version,
+            force_direct.unwrap_or(false),
         )
         .await
         .map_err(|error| format!("{error:#}"))?;
@@ -155,16 +165,62 @@ async fn connect_to_peer(
     peer_addrs: Vec<String>,
     relay_session_id: Option<String>,
 ) -> Result<(), String> {
-    let peer_addr = peer_addrs
-        .iter()
-        .find_map(|value| multiaddr_or_socket_to_socket(value))
-        .ok_or_else(|| "не удалось извлечь socket address из peerAddrs".to_string())?;
+    let mut chosen_addr = None;
+    let mut local_addr = None;
+
+    let mut my_local_ips = vec![];
+    if let Ok(interfaces) = get_if_addrs::get_if_addrs() {
+        for iface in interfaces {
+            if !iface.is_loopback() {
+                if let std::net::IpAddr::V4(ipv4) = iface.ip() {
+                    if !ipv4.is_link_local() {
+                        my_local_ips.push(ipv4);
+                    }
+                }
+            }
+        }
+    }
+
+    for addr in &peer_addrs {
+        if let Some(socket) = multiaddr_or_socket_to_socket(addr).and_then(|a| a.parse::<std::net::SocketAddr>().ok()) {
+            if let std::net::IpAddr::V4(ipv4) = socket.ip() {
+                if ipv4.is_private() {
+                    local_addr = Some(socket);
+                } else if chosen_addr.is_none() {
+                    chosen_addr = Some(socket);
+                }
+            } else if chosen_addr.is_none() {
+                chosen_addr = Some(socket);
+            }
+        }
+    }
+
+    if let Some(peer_loc) = local_addr {
+        if let std::net::IpAddr::V4(peer_ip) = peer_loc.ip() {
+            for my_ip in &my_local_ips {
+                if my_ip.octets()[0..2] == peer_ip.octets()[0..2] {
+                    chosen_addr = Some(peer_loc);
+                    let _ = state.manager.push_log(format!(
+                        "[P2P Client] Subnet match! Local interface {} matches peer local IP {}. Using LAN path.",
+                        my_ip, peer_ip
+                    )).await;
+                    break;
+                }
+            }
+        }
+    }
+
+    let peer_addr = chosen_addr.or(local_addr).ok_or_else(|| "не удалось извлечь socket address из peerAddrs".to_string())?;
+
+    let _ = state.manager.push_log(format!(
+        "[P2P Client] connect_to_peer final target: {}", peer_addr
+    )).await;
 
     state
         .manager
         .connect_to_peer(
-            app,
-            peer_addr,
+            wrap_app_handle(app),
+            peer_addr.to_string(),
             (!peer_id.trim().is_empty()).then_some(peer_id),
             relay_session_id,
         )
@@ -182,15 +238,61 @@ async fn prepare_client_connect(
     mc_version: Option<String>,
     slots: Option<String>,
 ) -> Result<(), String> {
-    let peer_addr = peer_addrs
-        .iter()
-        .find_map(|value| multiaddr_or_socket_to_socket(value))
-        .ok_or_else(|| "не удалось извлечь socket address из peerAddrs".to_string())?;
+    let mut chosen_addr = None;
+    let mut local_addr = None;
+
+    let mut my_local_ips = vec![];
+    if let Ok(interfaces) = get_if_addrs::get_if_addrs() {
+        for iface in interfaces {
+            if !iface.is_loopback() {
+                if let std::net::IpAddr::V4(ipv4) = iface.ip() {
+                    if !ipv4.is_link_local() {
+                        my_local_ips.push(ipv4);
+                    }
+                }
+            }
+        }
+    }
+
+    for addr in &peer_addrs {
+        if let Some(socket) = multiaddr_or_socket_to_socket(addr).and_then(|a| a.parse::<std::net::SocketAddr>().ok()) {
+            if let std::net::IpAddr::V4(ipv4) = socket.ip() {
+                if ipv4.is_private() {
+                    local_addr = Some(socket);
+                } else if chosen_addr.is_none() {
+                    chosen_addr = Some(socket);
+                }
+            } else if chosen_addr.is_none() {
+                chosen_addr = Some(socket);
+            }
+        }
+    }
+
+    if let Some(peer_loc) = local_addr {
+        if let std::net::IpAddr::V4(peer_ip) = peer_loc.ip() {
+            for my_ip in &my_local_ips {
+                if my_ip.octets()[0..2] == peer_ip.octets()[0..2] {
+                    chosen_addr = Some(peer_loc);
+                    let _ = state.manager.push_log(format!(
+                        "[P2P Client] Subnet match! Local interface {} matches peer local IP {}. Using LAN path.",
+                        my_ip, peer_ip
+                    )).await;
+                    break;
+                }
+            }
+        }
+    }
+
+    let peer_addr = chosen_addr.or(local_addr).ok_or_else(|| "не удалось извлечь socket address из peerAddrs".to_string())?;
+
+    let _ = state.manager.push_log(format!(
+        "[P2P Client] prepare_client_connect final target: {}", peer_addr
+    )).await;
 
     state
         .manager
         .prepare_client_connect(
-            peer_addr,
+            peer_addr.to_string(),
             (!peer_id.trim().is_empty()).then_some(peer_id),
             room_name,
             host_name,
@@ -210,7 +312,7 @@ async fn commit_prepared_client_connect(
 ) -> Result<(), String> {
     state
         .manager
-        .commit_prepared_client_connect(app, relay_session_id, use_udp.unwrap_or(false))
+        .commit_prepared_client_connect(wrap_app_handle(app), relay_session_id, use_udp.unwrap_or(false))
         .await
         .map_err(|error| format!("{error:#}"))
 }
@@ -225,20 +327,59 @@ async fn kick_peer(state: State<'_, AppState>, peer_id: String) -> Result<(), St
 }
 
 #[tauri::command]
+async fn refresh_lobby(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+    state
+        .manager
+        .refresh_lobby()
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn update_lobby_presence(state: State<'_, AppState>, client_id: String, payload: serde_json::Value) -> Result<(), String> {
+    state
+        .manager
+        .update_lobby_presence(client_id, payload)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn remove_lobby_presence(state: State<'_, AppState>, client_id: String) -> Result<(), String> {
+    state
+        .manager
+        .remove_lobby_presence(client_id)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn publish_lobby_event(state: State<'_, AppState>, channel: String, event: String, payload: serde_json::Value) -> Result<(), String> {
+    state
+        .manager
+        .publish_lobby_event(channel, event, payload)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn subscribe_lobby_events(app: AppHandle, state: State<'_, AppState>, channel: String) {
+    state.manager.subscribe_lobby_events(wrap_app_handle(app), channel, tokio_util::sync::CancellationToken::new());
+}
+
+#[tauri::command]
 async fn get_status(state: State<'_, AppState>) -> Result<NetworkStatus, String> {
     Ok(state.manager.get_status().await)
 }
 
 #[tauri::command]
-async fn run_preflight(local_port: u16) -> Result<models::PreflightReport, String> {
+async fn run_preflight(local_port: u16) -> Result<PreflightReport, String> {
     Ok(build_preflight_report(local_port).await)
 }
 
 #[tauri::command]
-async fn detect_lan_port() -> Result<LanPortDetection, String> {
-    detect_lan_port_from_logs()
-        .await
-        .map_err(|error| format!("{error:#}"))
+async fn get_available_lan_ports_command(ignored_ports: Vec<u16>) -> Result<Vec<LanPortDetection>, String> {
+    p2p_core::minecraft::get_available_lan_ports_command(ignored_ports).await
 }
 
 #[tauri::command]
@@ -264,7 +405,7 @@ async fn get_local_player_snapshot_command(port: u16) -> Result<LocalPlayerSnaps
 
 #[tauri::command]
 async fn get_latest_bedrock_world_name_command() -> Result<String, String> {
-    network::minecraft::get_latest_bedrock_world_name()
+    p2p_core::minecraft::get_latest_bedrock_world_name()
         .ok_or_else(|| "Could not find latest Bedrock world name".to_string())
 }
 
@@ -315,7 +456,7 @@ async fn start_test_server(
 ) -> Result<TestServerInfo, String> {
     state
         .test_server
-        .start(app, state.manager.shared_status(), port)
+        .start(wrap_app_handle(app), state.manager.shared_status(), port)
         .await
         .map_err(|error| format!("{error:#}"))
 }
@@ -506,13 +647,17 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             start_hosting,
             stop_hosting,
+            refresh_lobby,
+            update_lobby_presence,
+            remove_lobby_presence,
+            publish_lobby_event,
+            subscribe_lobby_events,
             connect_to_peer,
             prepare_client_connect,
             commit_prepared_client_connect,
             kick_peer,
             get_status,
             run_preflight,
-            detect_lan_port,
             detect_minecraft_nickname_command,
             detect_client_runtime_info_command,
             get_local_player_snapshot_command,
