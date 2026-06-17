@@ -108,7 +108,7 @@ const handleConnect = async ({ password }) => {
     
     // 2. Получаем наш публичный UDP адрес после STUN
     const currentStatus = await invoke('get_status')
-    const myUdpAddr = currentStatus?.publicUdpAddr || currentStatus?.udpBindAddr || ''
+    const myUdpAddr = currentStatus?.publicUdpAddr || ''
     
     // 3. Генерируем ID этой сессии
     const myClientId = 'desktop-client-' + Math.floor(Math.random() * 100000)
@@ -263,8 +263,8 @@ const copyEndpoint = (text) => {
           <div v-if="isHosting && status" class="active-host-card">
             <div class="host-info-row">
               <span>Публичный адрес</span>
-              <strong style="cursor: pointer;" @click="copyEndpoint(status.publicUdpAddr || status.udpBindAddr || '')">
-                {{ status.publicUdpAddr || status.udpBindAddr || 'Определяется...' }}
+              <strong style="cursor: pointer;" @click="copyEndpoint(status.publicUdpAddr || '')">
+                {{ status.publicUdpAddr || 'Не определён (STUN failed, только relay)' }}
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
               </strong>
             </div>
