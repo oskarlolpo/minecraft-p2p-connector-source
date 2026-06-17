@@ -202,7 +202,7 @@ async fn connect_to_peer(
     if let Some(peer_loc) = local_addr {
         if let std::net::IpAddr::V4(peer_ip) = peer_loc.ip() {
             for my_ip in &my_local_ips {
-                if my_ip.octets()[0..2] == peer_ip.octets()[0..2] {
+                if my_ip.octets()[0..3] == peer_ip.octets()[0..3] {
                     chosen_addr = Some(peer_loc);
                     let _ = state.manager.push_log(format!(
                         "[P2P Client] Subnet match! Local interface {} matches peer local IP {}. Using LAN path.",

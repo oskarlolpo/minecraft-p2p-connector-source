@@ -88,6 +88,7 @@ const handleConnect = async ({ password }) => {
     // Собираем все адреса (публичный + локальные) — Rust сам выберет лучший
     const addrs = [
       s.public_join_address || s.endpoint || s.serverIp || s.server_ip,
+      ...(s.listen_addrs || []),
       ...(s.local_ip ? s.local_ip.split(',').map(a => a.trim()).filter(Boolean) : [])
     ].filter(Boolean)
 
@@ -102,7 +103,7 @@ const handleConnect = async ({ password }) => {
       roomName: s.room_name || s.title || '',
       hostName: s.host_name || s.nickname || '',
       mcVersion: s.minecraft_version || s.version || s.mcVer || '',
-      slots: s.slots || s.players || '1/30'
+      slots: String(s.slots || s.players || '1/30')
     })
     
     // 2. Получаем наш публичный UDP адрес после STUN
@@ -118,50 +119,56 @@ const handleConnect = async ({ password }) => {
     // 4. Подписываемся на ответ хоста (наш личный канал)
     invoke('subscribe_lobby_events', { channel: `lobby:${myClientId}` }).catch(() => {})
     
-    // 5. Ждём connect-ack через tauri event
-    const ackPromise = new Promise((resolve) => {
-      let unlisten = null
-      listen('lobby-event', (event) => {
-        try {
-          const raw = event.payload              // { channel, data }
-          const ablyMsg = raw?.data || {}        // Ably message: { name, data }
-          const evName = ablyMsg?.name || ''
-          if (evName !== 'connect-ack') return
-          
-          // Ably data может быть JSON-строкой
-          let innerData = ablyMsg?.data
-          if (typeof innerData === 'string') {
-            try { innerData = JSON.parse(innerData) } catch (_) {}
-          }
-          const data = innerData || {}
-          
+    let ack = null;
+    try {
+      // 5. Ждём connect-ack через tauri event
+      const ackPromise = new Promise((resolve) => {
+        let unlisten = null
+        listen('lobby-event', (event) => {
+          try {
+            const raw = event.payload              // { channel, data }
+            const ablyMsg = raw?.data || {}        // Ably message: { name, data }
+            const evName = ablyMsg?.name || ''
+            if (evName !== 'connect-ack') return
+            
+            // Ably data может быть JSON-строкой
+            let innerData = ablyMsg?.data
+            if (typeof innerData === 'string') {
+              try { innerData = JSON.parse(innerData) } catch (_) {}
+            }
+            const data = innerData || {}
+            
+            if (data.relay_session_id && data.relay_session_id !== relaySessionId) return
+            if (raw?.channel !== `lobby:${myClientId}`) return
+            
+            if (unlisten) unlisten()
+            resolve(data)
+          } catch (_) {}
+        }).then(fn => { unlisten = fn })
+        setTimeout(() => {
           if (unlisten) unlisten()
-          resolve(data)
-        } catch (_) {}
-      }).then(fn => { unlisten = fn })
-      setTimeout(() => {
-        if (unlisten) unlisten()
-        resolve(null)
-      }, 12000)
-    })
+          resolve(null)
+        }, 12000)
+      })
 
-    // 6. Отправляем connect-request хосту
-    await invoke('publish_lobby_event', {
-      channel: `lobby:${s.client_id || s.peer_id || s.id}`,
-      event: 'connect-request',
-      payload: {
-        client_id: myClientId,
-        peer_addr: myUdpAddr,
-        relay_session_id: relaySessionId,
-        password: password || null
-      }
-    })
-    
-    // 7. Ждём ответа хоста
-    const ack = await ackPromise
-    
-    // 7.1 Отписываемся от SSE, чтобы не плодить зомби-таски
-    invoke('unsubscribe_lobby_events', { channel: `lobby:${myClientId}` }).catch(() => {})
+      // 6. Отправляем connect-request хосту
+      await invoke('publish_lobby_event', {
+        channel: `lobby:${s.client_id || s.peer_id || s.id}`,
+        event: 'connect-request',
+        payload: {
+          client_id: myClientId,
+          peer_addr: myUdpAddr,
+          relay_session_id: relaySessionId,
+          password: password || null
+        }
+      })
+      
+      // 7. Ждём ответа хоста
+      ack = await ackPromise
+    } finally {
+      // 7.1 Отписываемся от SSE, чтобы не плодить зомби-таски
+      invoke('unsubscribe_lobby_events', { channel: `lobby:${myClientId}` }).catch(() => {})
+    }
     
     if (ack && ack.accepted === true) {
       // 8. Открываем QUIC туннель

@@ -90,7 +90,7 @@ const installUpdate = async () => {
 
 const runPreflight = async () => {
   try {
-    const res = await invoke('run_preflight_check')
+    const res = await invoke('run_preflight', { localPort: testPort.value })
     alert(JSON.stringify(res, null, 2))
   } catch (e) {
     alert('Ошибка: ' + e)

@@ -227,26 +227,39 @@ const acceptRequest = async () => {
     const peerAddr = incomingRequest.value.peer_addr || ''
     const relaySessionId = incomingRequest.value.relay_session_id || null
 
-    // Отправляем connect-ack клиенту
-    await invoke('publish_lobby_event', {
-      channel: `lobby:${peerId}`,
-      event: 'connect-ack',
-      payload: {
-        relay_session_id: relaySessionId,
-        host_id: 'desktop-host',
-        accepted: true
-      }
-    })
-    
-    // Открываем P2P туннель к клиенту
-    const addrToUse = (peerAddr && peerAddr !== '') ? peerAddr : '0.0.0.0:0';
-    await invoke('connect_to_peer', {
-      peerId: peerId,
-      peerAddrs: [addrToUse],
-      relaySessionId: relaySessionId
-    })
+    // 1. Получаем свой ID (чтобы не был захардкожен)
+    const currentStatus = await invoke('get_status')
+    const myClientId = currentStatus?.client_id || 'desktop-host'
 
-    addLog(`Принято подключение от ${peerId}`)
+    // 2. Отправляем connect-ack клиенту
+    try {
+      await invoke('publish_lobby_event', {
+        channel: `lobby:${peerId}`,
+        event: 'connect-ack',
+        payload: {
+          relay_session_id: relaySessionId,
+          host_id: myClientId,
+          accepted: true
+        }
+      })
+    } catch (e) {
+      addLog('Ошибка отправки connect-ack: ' + e)
+      incomingRequest.value = null
+      return
+    }
+    
+    // 3. Открываем P2P туннель к клиенту (или релей, если адресов нет)
+    const addrToUse = (peerAddr && peerAddr !== '' && peerAddr !== '0.0.0.0:0') ? peerAddr : null
+    try {
+      await invoke('connect_to_peer', {
+        peerId: peerId,
+        peerAddrs: addrToUse ? [addrToUse] : [],
+        relaySessionId: relaySessionId
+      })
+      addLog(`Принято подключение от ${peerId}`)
+    } catch (e) {
+      addLog('Ошибка подключения к клиенту: ' + e)
+    }
   } catch (e) {
     addLog('Ошибка принятия: ' + e)
   } finally {
