@@ -239,13 +239,12 @@ const acceptRequest = async () => {
     })
     
     // Открываем P2P туннель к клиенту
-    if (peerAddr && peerAddr !== '0.0.0.0:0' && peerAddr !== '') {
-      await invoke('connect_to_peer', {
-        peerId: peerId,
-        peerAddrs: [peerAddr],
-        relaySessionId: relaySessionId
-      })
-    }
+    const addrToUse = (peerAddr && peerAddr !== '') ? peerAddr : '0.0.0.0:0';
+    await invoke('connect_to_peer', {
+      peerId: peerId,
+      peerAddrs: [addrToUse],
+      relaySessionId: relaySessionId
+    })
 
     addLog(`Принято подключение от ${peerId}`)
   } catch (e) {

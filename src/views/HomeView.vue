@@ -160,6 +160,9 @@ const handleConnect = async ({ password }) => {
     // 7. Ждём ответа хоста
     const ack = await ackPromise
     
+    // 7.1 Отписываемся от SSE, чтобы не плодить зомби-таски
+    invoke('unsubscribe_lobby_events', { channel: `lobby:${myClientId}` }).catch(() => {})
+    
     if (ack && ack.accepted === true) {
       // 8. Открываем QUIC туннель
       await invoke('commit_prepared_client_connect', {

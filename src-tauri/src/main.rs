@@ -36,6 +36,7 @@ struct AppState {
     geyser: GeyserManager,
     test_server: TestServerManager,
     last_preflight: std::sync::Arc<Mutex<Option<PreflightReport>>>,
+    sse_subscriptions: std::sync::Arc<Mutex<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>>,
 }
 
 fn wrap_app_handle(app: tauri::AppHandle) -> p2p_core::tauri_shim::AppHandle {
@@ -370,7 +371,17 @@ async fn publish_lobby_event(state: State<'_, AppState>, channel: String, event:
 
 #[tauri::command]
 async fn subscribe_lobby_events(app: AppHandle, state: State<'_, AppState>, channel: String) -> Result<(), String> {
-    state.manager.subscribe_lobby_events(wrap_app_handle(app), channel, tokio_util::sync::CancellationToken::new());
+    let cancel = tokio_util::sync::CancellationToken::new();
+    state.sse_subscriptions.lock().await.insert(channel.clone(), cancel.clone());
+    state.manager.subscribe_lobby_events(wrap_app_handle(app), channel, cancel);
+    Ok(())
+}
+
+#[tauri::command]
+async fn unsubscribe_lobby_events(state: State<'_, AppState>, channel: String) -> Result<(), String> {
+    if let Some(cancel) = state.sse_subscriptions.lock().await.remove(&channel) {
+        cancel.cancel();
+    }
     Ok(())
 }
 
@@ -679,6 +690,7 @@ fn main() {
             geyser: GeyserManager::new(),
             test_server: TestServerManager::new(),
             last_preflight: std::sync::Arc::new(Mutex::new(None)),
+            sse_subscriptions: std::sync::Arc::new(Mutex::new(std::collections::HashMap::new())),
         })
         .invoke_handler(tauri::generate_handler![
             start_hosting,
@@ -688,6 +700,7 @@ fn main() {
             remove_lobby_presence,
             publish_lobby_event,
             subscribe_lobby_events,
+            unsubscribe_lobby_events,
             connect_to_peer,
             prepare_client_connect,
             commit_prepared_client_connect,
