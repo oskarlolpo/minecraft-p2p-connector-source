@@ -240,8 +240,15 @@ async fn prepare_client_connect(
     room_name: Option<String>,
     host_name: Option<String>,
     mc_version: Option<String>,
-    slots: Option<String>,
+    slots: Option<serde_json::Value>,
 ) -> Result<(), String> {
+    let slots = slots.map(|v| {
+        if v.is_string() {
+            v.as_str().unwrap().to_string()
+        } else {
+            v.to_string()
+        }
+    });
     let mut chosen_addr = None;
     let mut local_addr = None;
 

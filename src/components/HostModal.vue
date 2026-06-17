@@ -172,7 +172,7 @@ const startHosting = () => {
 
         <label class="checkbox-row">
           <input v-model="forceDirectMode" type="checkbox" />
-          <span>Использовать только бесплатное подключение (NAT)</span>
+          <span>Только прямое P2P-соединение (без резервного relay-сервера)</span>
         </label>
 
         <label class="checkbox-row">
